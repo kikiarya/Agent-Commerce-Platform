@@ -1,0 +1,38 @@
+# Root
+.DS_Store
+Thumbs.db
+*.log
+.env
+.env.local
+*.pem
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Node / storefront
+storefront/node_modules/
+storefront/data/*.db
+storefront/data/*.db-*
+storefront/npm-debug.log*
+
+# Java / trade-core
+trade-core/.gradle/
+trade-core/**/build/
+trade-core/**/out/
+trade-core/**/.gradle/
+trade-core/frontend/node_modules/
+trade-core/frontend/build/
+trade-core/**/*.class
+
+# Python / misc
+__pycache__/
+.venv/
+*.pyc
+
+# OS / temp
+*.swp
+*~
+# Docs
+docs

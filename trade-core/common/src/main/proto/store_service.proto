@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package com.comp5348.common.grpc;
+
+// Store service for providing order and user information
+service StoreService {
+  // Get user email by order ID
+  rpc GetUserEmailByOrderId(GetUserEmailRequest) returns (GetUserEmailResponse);
+  
+  // Get order status by order ID
+  rpc GetOrderStatus(GetOrderStatusRequest) returns (GetOrderStatusResponse);
+  
+  // Get order information (userId, totalAmount, email)
+  rpc GetOrderInfo(GetOrderInfoRequest) returns (GetOrderInfoResponse);
+  
+  // Update order status
+  rpc UpdateOrderStatus(UpdateOrderStatusRequest) returns (UpdateOrderStatusResponse);
+}
+
+// Get User Email
+message GetUserEmailRequest {
+  int64 order_id = 1;
+}
+
+message GetUserEmailResponse {
+  bool found = 1;
+  string email = 2;
+}
+
+// Get Order Status
+message GetOrderStatusRequest {
+  int64 order_id = 1;
+}
+
+message GetOrderStatusResponse {
+  bool found = 1;
+  string status = 2;
+}
+
+// Get Order Info
+message GetOrderInfoRequest {
+  int64 order_id = 1;
+}
+
+message GetOrderInfoResponse {
+  bool found = 1;
+  int64 user_id = 2;
+  string total_amount = 3;  // BigDecimal as string
+  string email = 4;
+}
+
+// Update Order Status
+message UpdateOrderStatusRequest {
+  int64 order_id = 1;
+  string status = 2;
+}
+
+message UpdateOrderStatusResponse {
+  bool success = 1;
+}
+
+
+

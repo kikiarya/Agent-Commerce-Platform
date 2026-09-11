@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package com.comp5348.common.grpc;
+
+// Email service for sending notifications and updating store
+service EmailService {
+  // Send email notification and update store order status
+  rpc SendShipmentNotification(SendShipmentNotificationRequest) returns (SendShipmentNotificationResponse);
+
+  // Send delivery loss notification (refund + email)
+  rpc SendDeliveryLossNotification(SendDeliveryLossNotificationRequest) returns (SendDeliveryLossNotificationResponse);
+}
+
+// Send Shipment Notification Request
+message SendShipmentNotificationRequest {
+  int64 order_id = 1;
+  int64 shipment_id = 2;
+  string status = 3;          // Shipment status (PICKUP, IN_TRANSIT, OUT_FOR_DELIVERY, DELIVERED)
+  string user_email = 4;       // User email address
+}
+
+message SendShipmentNotificationResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Send Delivery Loss Notification Request
+message SendDeliveryLossNotificationRequest {
+  int64 order_id = 1;
+  int64 shipment_id = 2;
+  int64 user_id = 3;
+  string user_email = 4;
+  string total_amount = 5;     // BigDecimal as string
+}
+
+message SendDeliveryLossNotificationResponse {
+  bool success = 1;
+  string message = 2;
+}

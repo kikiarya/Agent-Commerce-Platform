@@ -1,0 +1,112 @@
+.notification-overlay {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  left: auto;
+  bottom: auto;
+  background-color: transparent;
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+  z-index: 10000;
+  animation: fadeIn 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  pointer-events: none;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.notification-modal {
+  background: #ffffff;
+  border-radius: 20px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  max-width: 400px;
+  width: 100%;
+  max-height: 80vh;
+  overflow: auto;
+  animation: slideInRight 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  pointer-events: auto;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.notification-header {
+  padding: 24px;
+  border-left: 4px solid #0071e3;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: linear-gradient(135deg, rgba(0, 113, 227, 0.05) 0%, rgba(255, 255, 255, 1) 100%);
+  border-radius: 20px 20px 0 0;
+}
+
+.notification-icon {
+  font-size: 32px;
+  line-height: 1;
+}
+
+.notification-header h3 {
+  margin: 0;
+  flex: 1;
+  font-size: 17px;
+  font-weight: 600;
+  color: #1d1d1f;
+  letter-spacing: -0.016em;
+}
+
+.notification-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: #86868b;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.notification-close:hover {
+  background: #f5f5f7;
+  color: #1d1d1f;
+}
+
+.notification-body {
+  padding: 24px;
+  color: #1d1d1f;
+  line-height: 1.47059;
+  font-size: 17px;
+}
+
+.notification-body p {
+  margin: 0 0 12px 0;
+}
+
+.notification-order-id {
+  margin-top: 16px !important;
+  padding-top: 16px;
+  border-top: 1px solid #d2d2d7;
+  font-weight: 600;
+  color: #0071e3;
+  font-size: 15px;
+}

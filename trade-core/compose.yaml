@@ -1,0 +1,212 @@
+name: distributed-ecommerce-platform
+
+x-java-common: &java-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  env_file:
+    - .env
+  environment: &java-env
+    DB_HOST: postgres
+    DB_PORT: 5432
+    DB_NAME: ${DB_NAME:-ecommerce_platform}
+    DB_USER: ${DB_USER:-postgres}
+    DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+    MQ_HOST: rabbitmq
+    MQ_PORT: 5672
+    MQ_USER: ${MQ_USER:-demo}
+    MQ_PASSWORD: ${MQ_PASSWORD:?Set MQ_PASSWORD in .env}
+    SERVER_ADDRESS: 0.0.0.0
+    GRPC_SERVER_ADDRESS: 0.0.0.0
+    STORE_BANK_BASE: http://bank:8081
+    STORE_DELIVERY_BASE: http://delivery:8082
+    STORE_EMAIL_BASE: http://email:8083
+    STORE_BASE_URL: http://store:8080
+    DELIVERY_CALLBACK_URL: http://store:8080/api/webhooks/delivery
+    GRPC_CLIENT_STORESERVICE_ADDRESS: static://store:9090
+    GRPC_CLIENT_EMAILSERVICE_ADDRESS: static://email:9091
+    JAVA_OPTS: ${JAVA_OPTS:--Xms256m -Xmx512m}
+  networks:
+    - ecommerce
+  depends_on:
+    postgres:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${DB_NAME:-ecommerce_platform}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks:
+      - ecommerce
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${MQ_USER:-demo}
+      RABBITMQ_DEFAULT_PASS: ${MQ_PASSWORD:?Set MQ_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks:
+      - ecommerce
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks:
+      - ecommerce
+
+  bank:
+    <<: *java-common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: bank
+    environment:
+      <<: *java-env
+    ports:
+      - "127.0.0.1:8081:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/ | grep -E '200|404|401|403'"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 60s
+
+  email:
+    <<: *java-common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: email
+    environment:
+      <<: *java-env
+    ports:
+      - "127.0.0.1:8083:8083"
+      - "127.0.0.1:9091:9091"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:8083/ | grep -E '200|404|401|403'"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 60s
+
+  store:
+    <<: *java-common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: store
+    environment:
+      <<: *java-env
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      APP_CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      bank:
+        condition: service_started
+      email:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/products >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 24
+      start_period: 90s
+
+  delivery:
+    <<: *java-common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: delivery
+    environment:
+      <<: *java-env
+      DELIVERY_LOSS_RATE: ${DELIVERY_LOSS_RATE:-0}
+      DELIVERY_STEP_SECONDS: ${DELIVERY_STEP_SECONDS:-5}
+    ports:
+      - "127.0.0.1:8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      store:
+        condition: service_healthy
+      email:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:8082/ | grep -E '200|404|401|403'"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        REACT_APP_API_BASE_URL: /api
+        REACT_APP_WS_URL: same-origin
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      store:
+        condition: service_healthy
+    networks:
+      - ecommerce
+
+networks:
+  ecommerce:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  rabbitmq-data:
+  redis-data:

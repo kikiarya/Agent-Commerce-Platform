@@ -1,0 +1,178 @@
+{
+    "info": {
+      "_postman_id": "8f9f5c27-d63f-45ee-9cfb-hardcoded",
+      "name": "COMP5348 Group Project – Hardcoded Test Suite",
+      "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+      {
+        "name": "1️⃣ Auth – Signup & Login",
+        "item": [
+          {
+            "name": "Signup (Customer)",
+            "request": {
+              "method": "POST",
+              "header": [{"key": "Content-Type", "value": "application/json"}],
+              "body": {
+                "mode": "raw",
+                "raw": "{\"email\": \"customer@example.com\", \"password\": \"COMP5348\", \"role\": \"CUSTOMER\"}"
+              },
+              "url": "http://localhost:8080/auth/signup"
+            }
+          },
+          {
+            "name": "Login (Customer)",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "exec": [
+                    "const jsonData = pm.response.json();",
+                    "if (jsonData.token) pm.environment.set('token', jsonData.token);"
+                  ]
+                }
+              }
+            ],
+            "request": {
+              "method": "POST",
+              "header": [{"key": "Content-Type", "value": "application/json"}],
+              "body": {
+                "mode": "raw",
+                "raw": "{\"email\": \"customer@example.com\", \"password\": \"COMP5348\"}"
+              },
+              "url": "http://localhost:8080/auth/login"
+            }
+          }
+        ]
+      },
+      {
+        "name": "2️⃣ Store – Orders & Inventory",
+        "item": [
+          {
+            "name": "Get All Products",
+            "request": {
+              "method": "GET",
+              "url": "http://localhost:8080/api/products"
+            }
+          },
+          {
+            "name": "Place Order (Single Warehouse)",
+            "request": {
+              "method": "POST",
+              "header": [{"key": "Content-Type", "value": "application/json"}],
+              "body": {
+                "mode": "raw",
+                "raw": "{\"userId\": 1, \"items\": [{\"productId\": 100, \"quantity\": 2}], \"paymentMethod\": \"CREDIT_CARD\"}"
+              },
+              "url": "http://localhost:8080/api/orders"
+            }
+          },
+          {
+            "name": "Place Order (Multi-Warehouse)",
+            "request": {
+              "method": "POST",
+              "header": [{"key": "Content-Type", "value": "application/json"}],
+              "body": {
+                "mode": "raw",
+                "raw": "{\"userId\": 1, \"items\": [{\"productId\": 100, \"quantity\": 60}], \"paymentMethod\": \"CREDIT_CARD\"}"
+              },
+              "url": "http://localhost:8080/api/orders"
+            }
+          }
+        ]
+      },
+      {
+        "name": "3️⃣ Bank – Payment & Refund",
+        "item": [
+          {
+            "name": "Transfer Payment",
+            "request": {
+              "method": "POST",
+              "header": [{"key": "Content-Type", "value": "application/json"}],
+              "body": {
+                "mode": "raw",
+                "raw": "{\"fromAccount\": \"customer-001\", \"toAccount\": \"store-001\", \"amount\": 120.00}"
+              },
+              "url": "http://localhost:8081/api/bank/transfer"
+            }
+          },
+          {
+            "name": "Refund Payment",
+            "request": {
+              "method": "POST",
+              "header": [{"key": "Content-Type", "value": "application/json"}],
+              "body": {
+                "mode": "raw",
+                "raw": "{\"fromAccount\": \"store-001\", \"toAccount\": \"customer-001\", \"amount\": 120.00}"
+              },
+              "url": "http://localhost:8081/api/bank/refund"
+            }
+          }
+        ]
+      },
+      {
+        "name": "4️⃣ Delivery – Update Status",
+        "item": [
+          {
+            "name": "Delivery Picked Up",
+            "request": {
+              "method": "POST",
+              "header": [{"key": "Content-Type", "value": "application/json"}],
+              "body": {
+                "mode": "raw",
+                "raw": "{\"orderId\": 2001, \"status\": \"PICKED_UP\"}"
+              },
+              "url": "http://localhost:8082/api/delivery/update"
+            }
+          },
+          {
+            "name": "Delivery Completed",
+            "request": {
+              "method": "POST",
+              "header": [{"key": "Content-Type", "value": "application/json"}],
+              "body": {
+                "mode": "raw",
+                "raw": "{\"orderId\": 2001, \"status\": \"DELIVERED\"}"
+              },
+              "url": "http://localhost:8082/api/delivery/update"
+            }
+          }
+        ]
+      },
+      {
+        "name": "5️⃣ Email – Notification",
+        "item": [
+          {
+            "name": "Send Order Email",
+            "request": {
+              "method": "POST",
+              "header": [{"key": "Content-Type", "value": "application/json"}],
+              "body": {
+                "mode": "raw",
+                "raw": "{\"to\": \"customer@example.com\", \"subject\": \"Order Confirmation\", \"body\": \"Your order has been received.\"}"
+              },
+              "url": "http://localhost:8083/api/email/send"
+            }
+          }
+        ]
+      },
+      {
+        "name": "6️⃣ Fault-tolerance Tests",
+        "item": [
+          {
+            "name": "Bank Down – Retry Simulation",
+            "request": {
+              "method": "POST",
+              "header": [{"key": "Content-Type", "value": "application/json"}],
+              "body": {
+                "mode": "raw",
+                "raw": "{\"userId\": 1, \"items\": [{\"productId\": 101, \"quantity\": 5}], \"paymentMethod\": \"CREDIT_CARD\"}"
+              },
+              "url": "http://localhost:8080/api/orders"
+            }
+          }
+        ]
+      }
+    ]
+  }
+  

@@ -1,0 +1,52 @@
+# Umbrella Compose — one command for trade-core + Agent storefront
+#
+#   cp .env.example .env   # fill passwords
+#   docker compose up -d --build
+#
+# Storefront (Agent Commerce UI):  http://localhost:3001
+# Trade Core API:                  http://localhost:8080/api
+# Core debug React UI (optional):  docker compose --profile core-ui up -d
+#                                  then http://localhost:3000
+
+name: agent-commerce
+
+include:
+  - path: ./trade-core/compose.yaml
+    env_file: ./.env
+
+services:
+  # Keep core React admin/debug UI off by default (port 3000 free for docs;
+  # storefront uses 3001 to avoid fighting the included frontend service).
+  frontend:
+    profiles: ["core-ui"]
+
+  storefront:
+    build:
+      context: ./storefront
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      PORT: "3000"
+      NODE_ENV: production
+      DATABASE_PATH: /app/data/storefront.db
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${STOREFRONT_JWT_SECRET:-change-me-storefront-demo-secret}
+      ORDER_TIMEOUT_MINUTES: "15"
+      USE_TRADE_CORE: "true"
+      TRADE_CORE_BASE_URL: http://store:8080
+      TRADE_CORE_DEFAULT_USER_ID: ${TRADE_CORE_DEFAULT_USER_ID:-1}
+      TRADE_CORE_SKU_ID_EQUALS_FRONT: ${TRADE_CORE_SKU_ID_EQUALS_FRONT:-true}
+    volumes:
+      - storefront-data:/app/data
+    depends_on:
+      store:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ecommerce
+
+volumes:
+  storefront-data:
