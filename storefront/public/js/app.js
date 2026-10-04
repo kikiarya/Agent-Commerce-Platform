@@ -27,6 +27,7 @@
     clearCart: document.getElementById('clear-cart'),
     checkoutName: document.getElementById('checkout-name'),
     checkoutEmail: document.getElementById('checkout-email'),
+    checkoutAddress: document.getElementById('checkout-address'),
     toast: document.getElementById('toast'),
     apiStatus: document.getElementById('api-status'),
     detailDialog: document.getElementById('detail-dialog'),
@@ -96,6 +97,8 @@
     const attrs = p.attrs || {};
     return {
       id: p.id,
+      source: p.source || 'local',
+      skuId: p.source === 'trade_core' ? p.skuId : undefined,
       brand: p.brand,
       model: p.model,
       title,
@@ -138,7 +141,7 @@
     const res = await fetch(path, { ...options, headers });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.error || `Request failed (${res.status})`);
+      throw Object.assign(new Error(data.error || `Request failed (${res.status})`), { status: res.status });
     }
     return data;
   }
@@ -151,6 +154,7 @@
     if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
     else localStorage.removeItem(USER_KEY);
     renderAuth();
+    renderCart();
   }
 
   function renderAuth() {
@@ -334,6 +338,8 @@
     cart.push({
       phone_id: phone.id,
       product_id: phone.id,
+      source: phone.source,
+      skuId: phone.skuId,
       title: phone.title,
       price: phone.price,
       img: phone.img,
@@ -355,7 +361,8 @@
     const totalPrice = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
     els.cartCount.textContent = String(totalQty);
     els.cartTotal.textContent = formatPrice(totalPrice);
-    els.checkoutBtn.disabled = cart.length === 0;
+    els.checkoutBtn.disabled = cart.length === 0 && !pendingCheckout();
+    els.checkoutBtn.textContent = pendingCheckout() ? '继续上次结算' : '查看报价并下单';
 
     els.cartItems.innerHTML = '';
     if (!cart.length) {
@@ -416,54 +423,108 @@
     els.detailDialog.showModal();
   }
 
+  function pendingKey() { return `core-checkout-v1:${user?.id || 'anonymous'}`; }
+  function pendingCheckout() {
+    try { return JSON.parse(localStorage.getItem(pendingKey()) || 'null'); } catch { return null; }
+  }
+
+  function showCoreLogin() {
+    const dialog = document.createElement('dialog');
+    dialog.innerHTML = `<form><h2>关联交易核心账号</h2>
+      <p>首次结算或核心登录过期时，请登录自己的 Core 账号。关联后不能切换为其他核心身份。</p>
+      <label>用户名 <input name="username" autocomplete="username" required></label>
+      <label>密码 <input name="password" type="password" autocomplete="current-password" required></label>
+      <p role="alert"></p><button type="submit" class="btn primary">关联账号</button>
+      <button type="button" class="btn">取消</button></form>`;
+    document.body.append(dialog);
+    dialog.querySelector('[type=button]').onclick = () => dialog.close();
+    dialog.onclose = () => dialog.remove();
+    dialog.querySelector('form').onsubmit = async event => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      form.querySelector('[type=submit]').disabled = true;
+      try {
+        await api('/api/auth/core-link', { method: 'POST', body: JSON.stringify({
+          username: form.elements.username.value, password: form.elements.password.value
+        }) });
+        dialog.close();
+        toast('账号已关联，请再次点击结算查看报价');
+      } catch (error) { form.querySelector('[role=alert]').textContent = error.message; }
+      finally { form.elements.password.value = ''; form.querySelector('[type=submit]').disabled = false; }
+    };
+    dialog.showModal();
+  }
+
   async function checkout() {
-    if (!cart.length) return;
+    if (!cart.length && !pendingCheckout()) return;
+    const actingUser = user?.id;
+    const key = pendingKey();
+    const sessionToken = token;
+    const requireSameUser = () => {
+      if (user?.id !== actingUser || token !== sessionToken) throw new Error('登录已改变，请重新结算');
+    };
     try {
       els.checkoutBtn.disabled = true;
+      let pending = pendingCheckout();
       const health = await api('/api/health');
-      const idem = crypto.randomUUID().replace(/-/g, '').slice(0, 32);
-
-      if (health.trade_core?.enabled) {
-        if (!token) {
-          toast('Login required for Trade Core checkout');
-          els.checkoutBtn.disabled = false;
-          return;
-        }
-        if (cart.length > 1) {
-          toast('Stage-1 core checkout: one item at a time');
-          els.checkoutBtn.disabled = false;
-          return;
-        }
-        const address =
-          els.checkoutName.value.trim()
-            ? `${els.checkoutName.value.trim()} · ${els.checkoutEmail.value.trim() || 'demo'} · 演示地址`
-            : '演示用户 · 上海市演示地址';
-        const created = await api('/api/checkout', {
-          method: 'POST',
-          body: JSON.stringify({
-            items: cart.map((item) => ({
-              product_id: item.product_id || item.phone_id,
+      requireSameUser();
+      if (health.trade_core?.enabled || pending) {
+        if (!token || !user) throw new Error('请先登录商城账号');
+        const link = await api('/api/auth/core-link');
+        requireSameUser();
+        if (!link.authenticated) { showCoreLogin(); return; }
+        if (!pending) {
+          const address = els.checkoutAddress.value.trim();
+          if (!address) throw new Error('请填写收货地址');
+          const cartSnapshot = JSON.stringify(cart);
+          const created = await api('/api/checkout', { method: 'POST', body: JSON.stringify({
+            items: cart.map(item => ({
+              ...(item.source === 'trade_core' ? { skuId: item.skuId } : { product_id: item.product_id || item.phone_id }),
               quantity: item.quantity
-            })),
-            shippingAddress: address
-          })
+            })), shippingAddress: address
+          }) });
+          pending = { checkoutId: created.checkoutId, idempotencyKey: created.idempotencyKey, cartSnapshot };
+          localStorage.setItem(key, JSON.stringify(pending));
+          requireSameUser();
+        }
+        let quote = await api(`/api/checkout/${pending.checkoutId}`);
+        requireSameUser();
+        if (quote.status === 'EXPIRED') {
+          if (window.confirm('上次结算已过期且未生成订单。清除后可重新获取报价。')) localStorage.removeItem(key);
+          return;
+        }
+        if (quote.status === 'DRAFT') quote = await api(`/api/checkout/${pending.checkoutId}/quote`, { method: 'POST', body: '{}' });
+        requireSameUser();
+        if (quote.status === 'QUOTED') {
+          const lines = quote.items.map(item => `SKU ${item.skuId} × ${item.quantity} · 单价 ${item.unitPrice}`).join('\n');
+          const yes = window.confirm(`${lines}\n运费：${quote.shippingFee}\n合计：${quote.totalAmount} ${quote.currency}\n地址：${quote.shippingAddress}\n报价版本：${quote.quoteVersion}\n确认按此报价提交订单？`);
+          if (!yes) {
+            if (window.confirm('保留此报价以便稍后继续？选择取消可修改购物车并重新报价。')) return;
+            localStorage.removeItem(key); return;
+          }
+          pending.quoteVersion = quote.quoteVersion;
+          localStorage.setItem(key, JSON.stringify(pending));
+          quote = await api(`/api/checkout/${pending.checkoutId}/confirm`, {
+            method: 'POST', body: JSON.stringify({ quoteVersion: pending.quoteVersion })
+          });
+        }
+        requireSameUser();
+        if (!['CONFIRMED', 'COMPLETED'].includes(quote.status)) throw new Error(`无法提交当前结算：${quote.status}`);
+        // A saved version proves this browser displayed this exact quote before confirming.
+        if (!pending.quoteVersion || pending.quoteVersion !== quote.quoteVersion) throw new Error('报价已改变，请刷新核对；未提交订单');
+        const order = await api(`/api/checkout/${pending.checkoutId}/complete`, {
+          method: 'POST', headers: { 'Idempotency-Key': pending.idempotencyKey },
+          body: JSON.stringify({ quoteVersion: pending.quoteVersion })
         });
-        await api(`/api/checkout/${created.checkoutId}/quote`, { method: 'POST', body: '{}' });
-        await api(`/api/checkout/${created.checkoutId}/confirm`, { method: 'POST', body: '{}' });
-        const order = await api(`/api/checkout/${created.checkoutId}/complete`, {
-          method: 'POST',
-          headers: { 'Idempotency-Key': idem },
-          body: JSON.stringify({ idempotencyKey: idem })
-        });
-        cart = [];
-        saveCart();
+        localStorage.removeItem(key);
+        requireSameUser();
+        if (JSON.stringify(cart) === pending.cartSnapshot) { cart = []; saveCart(); }
         closeCart();
-        toast(`Core order ${order.order_no || order.orderId} · ${order.status} · ${formatPrice(order.totalAmount)}`);
-        await loadMeta();
-        await loadPhones();
-        return;
+        toast(`Core order ${order.order_no || order.orderId} · ${order.status} · ${order.totalAmount} ${quote.currency}`);
+        await loadMeta(); await loadPhones(); return;
       }
-
+      if (cart.some(item => item.source === 'trade_core')) throw new Error('核心商品暂不可创建新订单，请稍后重试');
+      const idem = crypto.randomUUID();
       const result = await api('/api/orders', {
         method: 'POST',
         headers: { 'Idempotency-Key': idem },
@@ -483,10 +544,8 @@
       toast(`Order ${result.order_no || '#' + result.order_id} · ${formatPrice(result.total)} · pending`);
       await loadMeta();
       await loadPhones();
-    } catch (err) {
-      toast(err.message);
-      els.checkoutBtn.disabled = cart.length === 0;
-    }
+    } catch (error) { toast(error.message); }
+    finally { renderCart(); }
   }
 
   async function checkHealth() {

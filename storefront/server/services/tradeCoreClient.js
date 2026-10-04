@@ -3,7 +3,7 @@
  * Browser never calls this directly — only Express BFF.
  */
 const BASE = (process.env.TRADE_CORE_BASE_URL || 'http://127.0.0.1:8080').replace(/\/$/, '');
-const SERVICE_TOKEN = process.env.TRADE_CORE_SERVICE_TOKEN || '';
+const identity = require('./coreIdentity');
 const TIMEOUT_MS = Number(process.env.TRADE_CORE_TIMEOUT_MS) || 8000;
 
 function useTradeCore() {
@@ -12,15 +12,15 @@ function useTradeCore() {
 
 async function coreFetch(method, path, { userId, body, headers = {} } = {}) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
   const h = {
     Accept: 'application/json',
     ...headers
   };
-  if (userId != null) h['X-User-Id'] = String(userId);
-  if (SERVICE_TOKEN) h['X-Service-Token'] = SERVICE_TOKEN;
+  if (userId != null) h.Authorization = `Bearer ${identity.tokenFor(userId)}`;
   if (body !== undefined) h['Content-Type'] = 'application/json';
 
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
     const res = await fetch(`${BASE}${path}`, {
       method,
@@ -48,6 +48,7 @@ async function coreFetch(method, path, { userId, body, headers = {} } = {}) {
 }
 
 module.exports = {
+  login: (username, password) => coreFetch('POST', '/api/auth/login', { body: { username, password } }),
   useTradeCore,
   BASE,
   searchProducts: (q, priceMax, inStock) => {
@@ -63,11 +64,12 @@ module.exports = {
   createCheckout: (userId, body) => coreFetch('POST', '/api/checkouts', { userId, body }),
   updateCheckout: (userId, id, body) => coreFetch('PUT', `/api/checkouts/${id}`, { userId, body }),
   quoteCheckout: (userId, id) => coreFetch('POST', `/api/checkouts/${id}/quote`, { userId }),
-  confirmCheckout: (userId, id) => coreFetch('POST', `/api/checkouts/${id}/confirm`, { userId }),
+  confirmCheckout: (userId, id, quoteVersion) => coreFetch('POST', `/api/checkouts/${id}/confirm`, { userId, body: { quoteVersion } }),
   completeCheckout: (userId, id, body) =>
     coreFetch('POST', `/api/checkouts/${id}/complete`, { userId, body }),
   getCheckout: (userId, id) => coreFetch('GET', `/api/checkouts/${id}`, { userId }),
   getOrder: (userId, id) => coreFetch('GET', `/api/orders/${id}`, { userId }),
+  getDeliveryEvents: (userId, id) => coreFetch('GET', `/api/orders/${id}/delivery-events`, { userId }),
   listOrders: (userId) => coreFetch('GET', '/api/orders', { userId }),
   cancelOrder: (userId, id) => coreFetch('POST', `/api/orders/${id}/cancel`, { userId })
 };

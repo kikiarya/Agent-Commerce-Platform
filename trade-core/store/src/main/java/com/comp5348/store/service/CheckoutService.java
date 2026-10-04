@@ -9,6 +9,10 @@ import com.comp5348.store.repository.CheckoutSessionRepository;
 import com.comp5348.store.repository.ProductRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+import com.comp5348.store.exception.CheckoutConflictException;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -27,13 +31,15 @@ public class CheckoutService {
     private final CheckoutLineRepository lines;
     private final ProductRepository products;
     private final OrderService orders;
+    private final TransactionTemplate tx;
 
     public CheckoutService(CheckoutSessionRepository sessions, CheckoutLineRepository lines,
-                           ProductRepository products, OrderService orders) {
+                           ProductRepository products, OrderService orders, PlatformTransactionManager manager) {
         this.sessions = sessions;
         this.lines = lines;
         this.products = products;
         this.orders = orders;
+        this.tx = new TransactionTemplate(manager);
     }
 
     @Transactional
@@ -104,8 +110,9 @@ public class CheckoutService {
     }
 
     @Transactional
-    public CheckoutView confirm(Long userId, Long checkoutId) {
+    public CheckoutView confirm(Long userId, Long checkoutId, int quoteVersion) {
         CheckoutSession session = lockedOwned(userId, checkoutId);
+        requireVersion(session, quoteVersion);
         if (!"QUOTED".equals(session.getStatus()) && !"CONFIRMED".equals(session.getStatus())) {
             throw new IllegalStateException("Checkout must be QUOTED before confirm: " + session.getStatus());
         }
@@ -119,36 +126,48 @@ public class CheckoutService {
         return view(session);
     }
 
-    @Transactional
     public OrderView complete(Long userId, Long checkoutId, CompleteCheckoutRequest req) {
+        // Persist inventory, order, payment intent and checkout link BEFORE any remote debit.
+        OrderView pending = tx.execute(status -> completeLocked(userId, checkoutId, req));
+        try {
+            orders.settlePayment(pending.getOrderId());
+        } catch (RuntimeException error) {
+            // The durable PAYMENT_PENDING intent is recovered by OrderService's scheduler.
+            org.slf4j.LoggerFactory.getLogger(CheckoutService.class)
+                    .warn("Checkout payment deferred for order {}", pending.getOrderId());
+        }
+        return orders.getForUser(pending.getOrderId(), userId);
+    }
+
+    private OrderView completeLocked(Long userId, Long checkoutId, CompleteCheckoutRequest req) {
         requireUser(userId);
+        if (req.idempotencyKey() == null || req.idempotencyKey().isBlank() || req.idempotencyKey().length() > 48)
+            throw new IllegalArgumentException("Idempotency key must contain 1 to 48 characters");
         CheckoutSession session = lockedOwned(userId, checkoutId);
+        requireVersion(session, req.quoteVersion());
+        if (session.getOrderId() != null) {
+            if (!req.idempotencyKey().equals(session.getCompletionKey()))
+                throw new CheckoutConflictException("Checkout already completed with a different key");
+            return orders.getForUser(session.getOrderId(), userId);
+        }
         if (!"CONFIRMED".equals(session.getStatus())) {
             throw new IllegalStateException("Checkout must be CONFIRMED before complete: " + session.getStatus());
         }
         assertNotExpired(session);
-        if (session.getOrderId() != null) {
-            return orders.getForUser(session.getOrderId(), userId);
-        }
         List<CheckoutLine> current = lines.findByCheckoutId(checkoutId);
         if (current.isEmpty()) {
             throw new IllegalArgumentException("Checkout has no items");
         }
-        // V1 stage-1 complete: single-line only (multi-line in stage 2)
-        if (current.size() != 1) {
-            throw new IllegalArgumentException("V1 stage-1 supports single-SKU checkout only; got " + current.size() + " lines");
+        for (CheckoutLine line : current.stream()
+                .sorted(java.util.Comparator.comparing(CheckoutLine::getProductId)).toList()) {
+            Product product = products.findLockedById(line.getProductId())
+                    .orElseThrow(() -> new CheckoutConflictException("Product no longer available; refresh quote"));
+            if (product.getPrice().compareTo(line.getUnitPrice()) != 0)
+                throw new CheckoutConflictException("Price changed; refresh quote and confirm again");
         }
-        CheckoutLine line = current.get(0);
-        OrderView order = orders.placeFromCheckout(
-                userId,
-                line.getProductId(),
-                line.getQuantity(),
-                session.getTotalAmount(),
-                req.idempotencyKey(),
-                req.bankMock(),
-                checkoutId
-        );
+        OrderView order = orders.reserveConfirmedCheckout(session, current, req.idempotencyKey(), req.bankMock());
         session.setOrderId(order.getOrderId());
+        session.setCompletionKey(req.idempotencyKey());
         session.setStatus("COMPLETED");
         sessions.save(session);
         return order;
@@ -156,10 +175,21 @@ public class CheckoutService {
 
     @Transactional(readOnly = true)
     public CheckoutView get(Long userId, Long checkoutId) {
-        return view(lockedOwned(userId, checkoutId));
+        requireUser(userId);
+        CheckoutSession session = sessions.findById(checkoutId)
+                .orElseThrow(() -> new IllegalArgumentException("Checkout not found"));
+        if (!session.getUserId().equals(userId)) throw new AccessDeniedException("Checkout does not belong to user");
+        return view(session);
     }
 
     private void replaceLines(CheckoutSession session, List<CreateCheckoutRequest.CheckoutItemRequest> items) {
+        if (items == null || items.isEmpty() || items.size() > 100)
+            throw new IllegalArgumentException("Checkout requires 1 to 100 items");
+        var seen = new java.util.HashSet<Long>();
+        for (var item : items) {
+            if (item == null || item.skuId() == null || item.quantity() <= 0 || !seen.add(item.skuId()))
+                throw new IllegalArgumentException("Items must have positive quantities and distinct SKU IDs");
+        }
         lines.deleteByCheckoutId(session.getId());
         for (var item : items) {
             Product product = products.findById(item.skuId())
@@ -178,16 +208,14 @@ public class CheckoutService {
         CheckoutSession session = sessions.findLockedById(checkoutId)
                 .orElseThrow(() -> new IllegalArgumentException("Checkout not found: " + checkoutId));
         if (!session.getUserId().equals(userId)) {
-            throw new IllegalStateException("Checkout does not belong to user");
+            throw new AccessDeniedException("Checkout does not belong to user");
         }
         if ("COMPLETED".equals(session.getStatus())) {
             return session;
         }
         if (session.getExpiresAt() != null && session.getExpiresAt().isBefore(Instant.now())
                 && !"COMPLETED".equals(session.getStatus())) {
-            session.setStatus("EXPIRED");
-            sessions.save(session);
-            throw new IllegalStateException("Checkout expired");
+            throw new CheckoutConflictException("Checkout expired; create a new session");
         }
         return session;
     }
@@ -200,9 +228,7 @@ public class CheckoutService {
 
     private void assertNotExpired(CheckoutSession session) {
         if (session.getExpiresAt() != null && session.getExpiresAt().isBefore(Instant.now())) {
-            session.setStatus("EXPIRED");
-            sessions.save(session);
-            throw new IllegalStateException("Checkout expired");
+            throw new CheckoutConflictException("Checkout expired; create a new session");
         }
     }
 
@@ -217,7 +243,8 @@ public class CheckoutService {
         return new CheckoutView(
                 session.getId(),
                 session.getUserId(),
-                session.getStatus(),
+                session.getOrderId() == null && session.getExpiresAt() != null
+                        && session.getExpiresAt().isBefore(Instant.now()) ? "EXPIRED" : session.getStatus(),
                 session.getQuoteVersion(),
                 session.getSubtotal(),
                 session.getShippingFee(),
@@ -234,6 +261,11 @@ public class CheckoutService {
         if (userId == null || userId <= 0) {
             throw new IllegalArgumentException("X-User-Id is required");
         }
+    }
+
+    private static void requireVersion(CheckoutSession session, int version) {
+        if (version < 1 || version != session.getQuoteVersion())
+            throw new CheckoutConflictException("Quote version changed; refresh and confirm the displayed quote");
     }
 
     private static String blankToNull(String s) {

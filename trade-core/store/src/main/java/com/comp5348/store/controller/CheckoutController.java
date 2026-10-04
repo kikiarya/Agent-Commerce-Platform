@@ -18,43 +18,44 @@ public class CheckoutController {
 
     @PostMapping
     public ResponseEntity<CheckoutView> create(
-            @RequestHeader("X-User-Id") Long userId,
+            @RequestAttribute("authenticatedUserId") Long userId,
             @Valid @RequestBody CreateCheckoutRequest req) {
         return ResponseEntity.ok(checkouts.create(userId, req));
     }
 
     @GetMapping("/{id}")
     public ResponseEntity<CheckoutView> get(
-            @RequestHeader("X-User-Id") Long userId,
+            @RequestAttribute("authenticatedUserId") Long userId,
             @PathVariable Long id) {
         return ResponseEntity.ok(checkouts.get(userId, id));
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<CheckoutView> update(
-            @RequestHeader("X-User-Id") Long userId,
+            @RequestAttribute("authenticatedUserId") Long userId,
             @PathVariable Long id,
-            @RequestBody UpdateCheckoutRequest req) {
+            @Valid @RequestBody UpdateCheckoutRequest req) {
         return ResponseEntity.ok(checkouts.update(userId, id, req));
     }
 
     @PostMapping("/{id}/quote")
     public ResponseEntity<CheckoutView> quote(
-            @RequestHeader("X-User-Id") Long userId,
+            @RequestAttribute("authenticatedUserId") Long userId,
             @PathVariable Long id) {
         return ResponseEntity.ok(checkouts.quote(userId, id));
     }
 
     @PostMapping("/{id}/confirm")
     public ResponseEntity<CheckoutView> confirm(
-            @RequestHeader("X-User-Id") Long userId,
-            @PathVariable Long id) {
-        return ResponseEntity.ok(checkouts.confirm(userId, id));
+            @RequestAttribute("authenticatedUserId") Long userId,
+            @PathVariable Long id,
+            @Valid @RequestBody ConfirmCheckoutRequest req) {
+        return ResponseEntity.ok(checkouts.confirm(userId, id, req.quoteVersion()));
     }
 
     @PostMapping("/{id}/complete")
     public ResponseEntity<OrderView> complete(
-            @RequestHeader("X-User-Id") Long userId,
+            @RequestAttribute("authenticatedUserId") Long userId,
             @PathVariable Long id,
             @Valid @RequestBody CompleteCheckoutRequest req) {
         return ResponseEntity.ok(checkouts.complete(userId, id, req));

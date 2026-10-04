@@ -94,7 +94,7 @@ docker compose --profile core-ui up -d
 Set-Location storefront
 Copy-Item .env.example .env
 npm install
-npm run db:reset
+npm run seed
 npm start
 ```
 
@@ -110,6 +110,10 @@ Storefront 默认运行在 http://localhost:3000。
 | Core 管理员 | `admin` | `admin123` |
 
 上述账号只用于本地数据初始化，不应用于公网部署。
+
+首次核心结算时，先登录 Storefront，再在结算弹窗中用自己的 Core 账号关联。每个 Core 身份只能关联一个 Storefront 用户；令牌过期后重新登录同一 Core 账号。旧的 `user_id_map` 不作为身份凭据。填写收货地址、查看报价后确认；刷新或网络错误后点击“继续上次结算”使用原结算和原幂等键。
+
+迁移范围与回退步骤见 [迁移记录](docs/MIGRATION_20261004.md)，接口契约见 [BFF](docs/TRADE_CORE_BFF.md) 和 [Checkout](docs/STAGE1_CHECKOUT.md)。
 
 ## 常用命令
 
@@ -127,9 +131,9 @@ docker compose down
 Set-Location trade-core
 .\gradlew.bat test bootJar
 
-# 前台模块加载检查
+# 前台接口回归测试
 Set-Location ..\storefront
-node -e "require('./server/services/tradeCoreClient'); require('./server/routes/checkout'); require('./server/routes/products'); console.log('ok')"
+npm test
 ```
 
 ## 配置
@@ -142,13 +146,16 @@ node -e "require('./server/services/tradeCoreClient'); require('./server/routes/
 | `STOREFRONT_JWT_SECRET` | Storefront 身份令牌签名密钥 |
 | `USE_TRADE_CORE` | Storefront 是否调用 Java 交易核心 |
 | `TRADE_CORE_BASE_URL` | Store API 地址 |
-| `TRADE_CORE_DEFAULT_USER_ID` | BFF 映射到核心的默认本地用户 ID |
+| `CORE_TOKEN_ENCRYPTION_KEY` | BFF 加密核心令牌的独立密钥，至少 32 字节；未设时使用前台 JWT 密钥 |
+| `TRADE_CORE_SKU_ID_EQUALS_FRONT` | 仅在已验证目录 ID 一致时开启；默认 false |
 | `REDIS_URL` | Storefront Redis 连接地址 |
 | `LLM_PROVIDER` / `LLM_API_KEY` / `LLM_MODEL` | 可选的客服模型配置 |
 
 ## 当前边界
 
-- Checkout 提交目前只支持单个 SKU；接口可接收的多行数据尚未转换为多行订单。
+- Checkout 支持 1–100 个不同 SKU，原子预留库存，快照价格与地址；BFF 要求显式关联核心账号并确认报价版本。
+- 客服仍是关键词 FAQ 与只读查询加可选模型回复；未实现自主购物 Agent、向量 RAG 或模型准确率评测。
+- 秒杀仍写入本地 SQLite，与核心订单流程独立；未迁移历史用户映射、订单或数据库卷。
 - Bank、Delivery 和 Email 是本地模拟服务，未接入真实支付、物流或邮件供应商。
 - Storefront 的 FAQ 为本地关键词检索；商品、库存和订单数据由数据库查询提供。
 - 根目录 Compose 面向本地单机环境，不包含生产集群、托管密钥、多节点 Redis 或完整可观测性配置。
@@ -163,3 +170,26 @@ node -e "require('./server/services/tradeCoreClient'); require('./server/routes/
 ├── storefront/          # Node.js 商城、BFF、SQLite 与 Redis
 └── trade-core/         # Store / Bank / Delivery / Email 与核心调试 UI
 ```
+
+## 真实服务交易联调
+
+准备根目录 `.env` 后，启动独立的联调 Compose 项目（数据卷与默认项目分开）：
+
+```powershell
+docker compose -p agent-commerce-integration up -d --build --wait --wait-timeout 300
+node scripts/integration-smoke.cjs --local-demo
+```
+
+脚本会登录预置买家并关联 Core customer，选择两个商品，验证报价版本、订单快照、重复提交相同订单、错误键拒绝，然后等待实际配送回调将订单推进到 FULFILLED。每次执行会消耗模拟余额和库存，只用于独立演示环境；不要对已有业务数据运行。脚本输出结算和订单 ID，方便失败后追踪，不打印登录令牌或密码。
+
+成功只证明交易至履约的 API 路径；邮件消费、故障注入和浏览器完整交互仍需分别验收。Docker 启动失败或脚本超时均不算通过。暂未在当前 Windows Docker 环境完成此验收。
+
+```powershell
+# 查看服务状态；按脚本输出的订单 ID 排查服务日志
+docker compose -p agent-commerce-integration ps
+docker compose -p agent-commerce-integration logs --tail 100 store bank delivery email
+# 停止时保留数据卷
+docker compose -p agent-commerce-integration down
+```
+
+启动依赖的环境变量由根 Compose 统一传入，不再要求额外创建 trade-core/.env。独立运行 trade-core 时仍应在该目录自行准备 .env，用于 Compose 变量插值。

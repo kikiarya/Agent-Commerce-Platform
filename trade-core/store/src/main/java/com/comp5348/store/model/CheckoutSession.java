@@ -39,6 +39,9 @@ public class CheckoutSession {
 
     private Long orderId;
 
+    @Column(length = 48)
+    private String completionKey;
+
     private Instant quotedAt;
     private Instant confirmedAt;
     private Instant expiresAt;
@@ -83,6 +86,8 @@ public class CheckoutSession {
     public String getShippingAddress() { return shippingAddress; }
     public void setShippingAddress(String shippingAddress) { this.shippingAddress = shippingAddress; }
     public Long getOrderId() { return orderId; }
+    public String getCompletionKey() { return completionKey; }
+    public void setCompletionKey(String completionKey) { this.completionKey = completionKey; }
     public void setOrderId(Long orderId) { this.orderId = orderId; }
     public Instant getQuotedAt() { return quotedAt; }
     public void setQuotedAt(Instant quotedAt) { this.quotedAt = quotedAt; }

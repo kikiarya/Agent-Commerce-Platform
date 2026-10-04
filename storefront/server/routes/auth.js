@@ -10,6 +10,17 @@ const {
 } = require('../middleware/auth');
 
 const router = express.Router();
+const identity = require('../services/coreIdentity');
+const trade = require('../services/tradeCoreClient');
+
+router.get('/core-link', authRequired, (req, res) => res.json(identity.status(req.user.id)));
+router.post('/core-link', authRequired, async (req, res) => {
+  if (!req.body?.username || !req.body?.password) return res.status(400).json({ error: 'Core username and password required' });
+  try {
+    const login = await trade.login(String(req.body.username), String(req.body.password));
+    res.json(identity.saveLink(req.user.id, login));
+  } catch (error) { res.status(error.status || 502).json({ error: error.message }); }
+});
 
 router.post('/register', async (req, res) => {
   const { email, password, name } = req.body || {};
@@ -57,6 +68,7 @@ router.post('/login', async (req, res) => {
 });
 
 router.post('/logout', authRequired, async (req, res) => {
+  identity.revoke(req.user.id);
   await revokeSession(req.user.id, req.token);
   res.json({ message: 'Logged out' });
 });

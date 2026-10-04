@@ -9,7 +9,8 @@
     "seed": "node server/seed.js",
     "db:reset": "node server/seed.js --force",
     "docker:up": "docker compose up --build -d",
-    "docker:down": "docker compose down"
+    "docker:down": "docker compose down",
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=18"

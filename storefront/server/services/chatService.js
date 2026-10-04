@@ -4,6 +4,7 @@ const { randomUUID } = require('crypto');
 const { getDb } = require('../db');
 const { getRedis, isRedisReady } = require('../redis');
 const { resolveLlmConfig } = require('./llmConfig');
+const trade = require('./tradeCoreClient');
 
 const FAQ = JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', 'knowledge', 'faq.json'), 'utf8')
@@ -12,11 +13,13 @@ const FAQ = JSON.parse(
 function ensureSession(sessionId, userId) {
   const id = sessionId || randomUUID();
   const db = getDb();
-  const existing = db.prepare('SELECT id FROM chat_sessions WHERE id = ?').get(id);
+  const existing = db.prepare('SELECT id, user_id FROM chat_sessions WHERE id = ?').get(id);
   if (!existing) {
     db.prepare(
       `INSERT INTO chat_sessions (id, user_id) VALUES (?, ?)`
     ).run(id, userId || null);
+  } else if (existing.user_id !== (userId || null)) {
+    return ensureSession(null, userId);
   } else if (userId) {
     db.prepare(
       `UPDATE chat_sessions SET user_id = COALESCE(user_id, ?), updated_at = datetime('now') WHERE id = ?`
@@ -92,7 +95,8 @@ function toolSearchPhones(query) {
   return rows;
 }
 
-function toolGetOrder(orderNoOrId, userId) {
+async function toolGetOrder(orderNoOrId, userId) {
+  if (!userId) return { error: 'Login required' };
   const db = getDb();
   let order = null;
   if (/^\d+$/.test(String(orderNoOrId))) {
@@ -101,8 +105,14 @@ function toolGetOrder(orderNoOrId, userId) {
     order = db.prepare('SELECT * FROM orders WHERE order_no = ?').get(String(orderNoOrId));
   }
   if (!order) return null;
-  if (userId && order.user_id && order.user_id !== userId) {
-    return { error: 'Order belongs to another account' };
+  if (order.user_id !== userId) {
+    return { error: 'Order not found for current account' };
+  }
+  if (order.mid_order_id) {
+    try {
+      const view = await trade.getOrder(userId, order.mid_order_id);
+      return { order_no: order.order_no, status: view.status, total: view.totalAmount, items: view.items, source: 'trade_core' };
+    } catch { return { error: 'Core order status unavailable; please sign in to core or retry later' }; }
   }
   const items = db
     .prepare(
@@ -225,13 +235,13 @@ async function chat({ sessionId, userId, message }) {
     toolsUsed.flash = toolListFlashDeals();
   }
   if (intent === 'order_lookup') {
-    const m = message.match(/OPS[A-Z0-9]+|\b\d{1,8}\b/i);
-    if (m) toolsUsed.order = toolGetOrder(m[0], userId);
+    const m = message.match(/MID-\d+|OPS[A-Z0-9]+|\b\d{1,8}\b/i);
+    if (m) toolsUsed.order = await toolGetOrder(m[0], userId);
   }
 
   const memory = await getMemory(sid);
   let reply = null;
-  let mode = 'local-rag';
+  let mode = 'local-faq';
   const llmCfg = resolveLlmConfig();
 
   try {

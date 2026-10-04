@@ -50,7 +50,7 @@ jobs:
       - run: npm run build
 
   storefront:
-    name: storefront (syntax check)
+    name: storefront (BFF regression tests)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -68,3 +68,6 @@ jobs:
 
       - name: Load modules (smoke)
         run: node -e "require('./server/services/tradeCoreClient'); require('./server/routes/checkout'); require('./server/routes/products'); console.log('ok')"
+
+      - name: BFF integration regression
+        run: npm test

@@ -41,6 +41,14 @@ public class Order {
     /** Links to CheckoutSession when created via complete checkout */
     private Long checkoutId;
 
+    /** Immutable checkout snapshots; nullable for legacy orders. */
+    @Column(length = 512)
+    private String shippingAddress;
+    private BigDecimal shippingFee;
+    @Column(length = 8)
+    private String currency;
+    private Integer quoteVersion;
+
     /** Same as Bank / PaymentAttempt.paymentAttemptId (usually = idempotencyKey) */
     @Column(length = 48)
     private String paymentAttemptId;

@@ -32,12 +32,12 @@ services:
       NODE_ENV: production
       DATABASE_PATH: /app/data/storefront.db
       REDIS_URL: redis://redis:6379
-      JWT_SECRET: ${STOREFRONT_JWT_SECRET:-change-me-storefront-demo-secret}
+      JWT_SECRET: ${STOREFRONT_JWT_SECRET:?Set STOREFRONT_JWT_SECRET to at least 32 bytes}
+      CORE_TOKEN_ENCRYPTION_KEY: ${CORE_TOKEN_ENCRYPTION_KEY:-}
       ORDER_TIMEOUT_MINUTES: "15"
       USE_TRADE_CORE: "true"
       TRADE_CORE_BASE_URL: http://store:8080
-      TRADE_CORE_DEFAULT_USER_ID: ${TRADE_CORE_DEFAULT_USER_ID:-1}
-      TRADE_CORE_SKU_ID_EQUALS_FRONT: ${TRADE_CORE_SKU_ID_EQUALS_FRONT:-true}
+      TRADE_CORE_SKU_ID_EQUALS_FRONT: ${TRADE_CORE_SKU_ID_EQUALS_FRONT:-false}
     volumes:
       - storefront-data:/app/data
     depends_on:

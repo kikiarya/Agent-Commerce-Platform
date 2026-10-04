@@ -52,13 +52,8 @@ function authOptional(req, _res, next) {
     return next();
   }
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    req.user = {
-      id: payload.sub,
-      email: payload.email,
-      role: payload.role,
-      name: payload.name
-    };
+    const payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
+    req.user = publicUser(loadUserById(payload.sub));
     req.token = token;
   } catch {
     req.user = null;

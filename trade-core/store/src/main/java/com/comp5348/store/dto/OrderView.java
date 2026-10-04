@@ -16,6 +16,14 @@ public class OrderView {
     private String refundStatus;
     private String paymentAttemptId;
     private Long checkoutId;
+    private String shippingAddress;
+    private BigDecimal shippingFee;
+    private String currency;
+    private Integer quoteVersion;
+    private List<Line> items;
+
+    /** A line is a warehouse allocation; the same SKU may span multiple warehouses. */
+    public record Line(Long skuId, int quantity, BigDecimal unitPrice, Long warehouseStockId) {}
 
     // --- Constructors ---
     public OrderView(Long orderId, String status, BigDecimal totalAmount) {
@@ -70,4 +78,14 @@ public class OrderView {
     public void setPaymentAttemptId(String paymentAttemptId) { this.paymentAttemptId = paymentAttemptId; }
     public Long getCheckoutId() { return checkoutId; }
     public void setCheckoutId(Long checkoutId) { this.checkoutId = checkoutId; }
+    public String getShippingAddress() { return shippingAddress; }
+    public void setShippingAddress(String value) { shippingAddress = value; }
+    public BigDecimal getShippingFee() { return shippingFee; }
+    public void setShippingFee(BigDecimal value) { shippingFee = value; }
+    public String getCurrency() { return currency; }
+    public void setCurrency(String value) { currency = value; }
+    public Integer getQuoteVersion() { return quoteVersion; }
+    public void setQuoteVersion(Integer value) { quoteVersion = value; }
+    public List<Line> getItems() { return items; }
+    public void setItems(List<Line> value) { items = value; }
 }

@@ -10,6 +10,15 @@ import java.util.Map;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(CheckoutConflictException.class)
+    public ResponseEntity<Map<String, String>> handleCheckoutConflict(CheckoutConflictException ex) {
+        return ResponseEntity.status(409).body(Map.of("error", "Checkout conflict", "message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+    public ResponseEntity<Map<String, String>> handleAccessDenied(Exception ex) {
+        return ResponseEntity.status(403).body(Map.of("error", "Access denied"));
+    }
 
     @ExceptionHandler(InsufficientStockException.class)
     public ResponseEntity<Map<String, Object>> handleInsufficientStock(InsufficientStockException ex) {

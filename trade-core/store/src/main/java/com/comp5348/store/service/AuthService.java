@@ -99,7 +99,7 @@ public class AuthService {
         String userId = user.getId().toString();
         String jwt = JwtUtil.createJWT(userId);
 
-        log.info("Registered user: {} (ID: {}), jwt: {}", username, userId, jwt);
+        log.info("Registered user: {} (ID: {})", username, userId);
 
 
         return Optional.of(new LoginResponse(

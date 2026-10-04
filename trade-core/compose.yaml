@@ -5,8 +5,6 @@ x-java-common: &java-common
     context: .
     dockerfile: Dockerfile
   restart: unless-stopped
-  env_file:
-    - .env
   environment: &java-env
     DB_HOST: postgres
     DB_PORT: 5432

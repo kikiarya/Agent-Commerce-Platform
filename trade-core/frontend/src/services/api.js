@@ -9,15 +9,15 @@ const api = axios.create({
   },
 });
 
-// Add request interceptor to automatically add user ID to header
+// Identity is verified by Store from its signed token, never a browser-supplied user ID.
 api.interceptors.request.use(
   (config) => {
     const userStr = localStorage.getItem('user');
     if (userStr) {
       try {
         const user = JSON.parse(userStr);
-        if (user.userId) {
-          config.headers['X-User-Id'] = user.userId;
+        if (user.token) {
+          config.headers.Authorization = `Bearer ${user.token}`;
         }
       } catch (e) {
         // Failed to parse user data
@@ -61,6 +61,18 @@ export const ordersAPI = {
     );
   },
   cancel: (id) => api.post(`/orders/${id}/cancel`),
+};
+
+// Keep idempotencyKey stable across retries. Confirmation must follow a user review
+// of this exact quoteVersion; do not call confirm automatically while quoting.
+export const checkoutsAPI = {
+  create: (items, shippingAddress) => api.post('/checkouts', { items, shippingAddress }),
+  get: (id) => api.get(`/checkouts/${id}`),
+  update: (id, changes) => api.put(`/checkouts/${id}`, changes),
+  quote: (id) => api.post(`/checkouts/${id}/quote`),
+  confirm: (id, quoteVersion) => api.post(`/checkouts/${id}/confirm`, { quoteVersion }),
+  complete: (id, quoteVersion, idempotencyKey) =>
+    api.post(`/checkouts/${id}/complete`, { quoteVersion, idempotencyKey }),
 };
 
 // Warehouses API

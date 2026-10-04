@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>我的订单</title><link rel="stylesheet" href="/css/styles.css"></head>
+<body><main style="max-width:900px;margin:32px auto;padding:20px">
+<a href="/">返回商城</a><h1>我的订单</h1>
+<p>查看订单进度，或继续之前的结算。</p>
+<p id="account" role="status"></p><button id="reload" class="btn" type="button">刷新</button>
+<button id="core-login" class="btn" type="button">登录交易账号</button><h2>订单记录</h2><p>列表显示上次保存的状态，点击“查看最新进度”向交易服务查询。</p><div id="orders"></div>
+<h2>结算记录</h2><p>换设备后登录同一个商城账号，即可在这里继续。恢复结算不会自动提交订单。</p><div id="checkouts"></div><button id="more" class="btn" hidden>加载更多结算</button>
+<dialog id="detail"><h2 id="detail-title">详情</h2><div id="detail-body"></div><p id="detail-message" role="status"></p><button id="resume" class="btn primary" hidden>核对并继续</button><button id="close-detail" class="btn">关闭</button></dialog>
+<dialog id="login-dialog"><form id="login-form"><h2>登录交易账号</h2><p>登录过期时，请使用之前关联的同一个账号。</p><label>用户名<input name="username" autocomplete="username" required></label><label>密码<input name="password" type="password" autocomplete="current-password" required></label><p id="login-message" role="alert"></p><button type="submit" class="btn">登录</button><button type="button" id="close-login" class="btn">取消</button></form></dialog><script src="/js/orders.js"></script></main></body></html>

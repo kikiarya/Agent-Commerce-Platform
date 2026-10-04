@@ -2,7 +2,7 @@ const { getDb } = require('../db');
 
 /**
  * Map front-end user → Trade Core user id.
- * V1 demo: TRADE_CORE_DEFAULT_USER_ID (default 1 = seeded "customer").
+ * Legacy user_id_map is retained only for reconciliation, never for authentication.
  */
 function ensureUserMapSchema(db) {
   db.exec(`
@@ -18,18 +18,6 @@ function ensureUserMapSchema(db) {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
-}
-
-function resolveMidUserId(frontUserId) {
-  const db = getDb();
-  ensureUserMapSchema(db);
-  const row = db.prepare('SELECT mid_user_id FROM user_id_map WHERE front_user_id = ?').get(frontUserId);
-  if (row) return row.mid_user_id;
-  const mid = Number(process.env.TRADE_CORE_DEFAULT_USER_ID) || 1;
-  db.prepare(
-    'INSERT OR REPLACE INTO user_id_map (front_user_id, mid_user_id) VALUES (?, ?)'
-  ).run(frontUserId, mid);
-  return mid;
 }
 
 function resolveMidSkuId(frontProductId) {
@@ -57,7 +45,6 @@ function setSkuMap(frontProductId, midProductId, note) {
 
 module.exports = {
   ensureUserMapSchema,
-  resolveMidUserId,
   resolveMidSkuId,
   setSkuMap
 };

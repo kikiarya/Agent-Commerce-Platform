@@ -4,7 +4,7 @@ const { authOptional, authRequired } = require('../middleware/auth');
 const { getRedis, isRedisReady } = require('../redis');
 const { cacheDel } = require('../services/cacheService');
 const trade = require('../services/tradeCoreClient');
-const { resolveMidUserId } = require('../services/userMap');
+
 
 const router = express.Router();
 
@@ -28,7 +28,7 @@ async function acquireIdempotency(key, userId) {
  * Local SQLite checkout when USE_TRADE_CORE=false.
  * When trade core is on, clients must use /api/checkout instead.
  */
-router.post('/', authOptional, async (req, res) => {
+router.post('/', authRequired, async (req, res) => {
   if (trade.useTradeCore()) {
     return res.status(409).json({
       error: 'Direct local checkout disabled while USE_TRADE_CORE=true',
@@ -51,8 +51,9 @@ router.post('/', authOptional, async (req, res) => {
 
   if (idempotencyKey) {
     const existing = db
-      .prepare('SELECT id, order_no, total, status FROM orders WHERE idempotency_key = ?')
+      .prepare('SELECT id, order_no, total, status, user_id FROM orders WHERE idempotency_key = ?')
       .get(String(idempotencyKey));
+    if (existing && existing.user_id !== req.user.id) return res.status(409).json({ error: 'Idempotency key already used' });
     if (existing) {
       return res.status(200).json({
         message: 'Idempotent replay',
@@ -155,15 +156,15 @@ router.get('/mine', authRequired, (req, res) => {
   const db = getDb();
   const orders = db
     .prepare(
-      `SELECT id, order_no, total, status, source, created_at, updated_at
+      `SELECT id, order_no, total, status, source, mid_order_id, created_at, updated_at
        FROM orders WHERE user_id = ? ORDER BY id DESC LIMIT 50`
     )
     .all(req.user.id);
-  res.json({ count: orders.length, orders });
+  res.json({ count: orders.length, orders: orders.map(order => ({ ...order, stale_projection: !!order.mid_order_id })) });
 });
 
 /** POST /api/orders/:id/pay — local demo only */
-router.post('/:id/pay', authOptional, (req, res) => {
+router.post('/:id/pay', authRequired, (req, res) => {
   if (trade.useTradeCore()) {
     return res.status(410).json({
       error: 'Local pay disabled',
@@ -173,7 +174,7 @@ router.post('/:id/pay', authOptional, (req, res) => {
   const db = getDb();
   const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(Number(req.params.id));
   if (!order) return res.status(404).json({ error: 'Order not found' });
-  if (req.user && order.user_id && order.user_id !== req.user.id && req.user.role !== 'admin') {
+  if (order.user_id !== req.user.id) {
     return res.status(403).json({ error: 'Forbidden' });
   }
   if (order.mid_order_id) {
@@ -200,21 +201,18 @@ router.post('/:id/pay', authOptional, (req, res) => {
 });
 
 /** POST /api/orders/:id/cancel */
-router.post('/:id/cancel', authOptional, async (req, res) => {
+router.post('/:id/cancel', authRequired, async (req, res) => {
   const db = getDb();
   const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(Number(req.params.id));
   if (!order) return res.status(404).json({ error: 'Order not found' });
-  if (req.user && order.user_id && order.user_id !== req.user.id && req.user.role !== 'admin') {
+  if (order.user_id !== req.user.id) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
   if (order.mid_order_id) {
-    if (!trade.useTradeCore()) {
-      return res.status(503).json({ error: 'Trade core offline; cannot cancel mid order' });
-    }
     if (!req.user) return res.status(401).json({ error: 'Login required' });
     try {
-      const midUser = resolveMidUserId(req.user.id);
+      const midUser = req.user.id;
       const view = await trade.cancelOrder(midUser, order.mid_order_id);
       db.prepare(
         `UPDATE orders SET status = ?, refund_status = ?, updated_at = datetime('now') WHERE id = ?`
@@ -250,19 +248,19 @@ router.post('/:id/cancel', authOptional, async (req, res) => {
 });
 
 /** GET /api/orders/:id */
-router.get('/:id', authOptional, async (req, res) => {
+router.get('/:id', authRequired, async (req, res) => {
   const db = getDb();
   const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(Number(req.params.id));
   if (!order) {
     return res.status(404).json({ error: 'Order not found' });
   }
-  if (req.user && order.user_id && order.user_id !== req.user.id && req.user.role !== 'admin') {
+  if (order.user_id !== req.user.id) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
-  if (order.mid_order_id && trade.useTradeCore() && req.user) {
+  if (order.mid_order_id) {
     try {
-      const midUser = resolveMidUserId(req.user.id);
+      const midUser = req.user.id;
       const view = await trade.getOrder(midUser, order.mid_order_id);
       db.prepare(
         `UPDATE orders SET status = ?, refund_status = ?, updated_at = datetime('now') WHERE id = ?`
@@ -272,11 +270,12 @@ router.get('/:id', authOptional, async (req, res) => {
         status: view.status,
         refund_status: view.refundStatus,
         mid: view,
-        items: [],
-        status_flow: ORDER_STATUSES
+        items: view.items,
+        status_flow: null,
+        stale_projection: false
       });
     } catch (err) {
-      /* fall through to local projection */
+      return res.status(err.status || 502).json({ error: err.message, stale_projection: true });
     }
   }
 
@@ -292,4 +291,11 @@ router.get('/:id', authOptional, async (req, res) => {
   res.json({ ...order, items, status_flow: ORDER_STATUSES });
 });
 
+router.get('/:id/delivery-events', authRequired, async (req, res) => {
+  const order = getDb().prepare('SELECT user_id, mid_order_id FROM orders WHERE id=?').get(Number(req.params.id));
+  if (!order || order.user_id !== req.user.id) return res.status(404).json({error:'Order not found'});
+  if (!order.mid_order_id) return res.json({events:[], source:'local'});
+  try { res.json({events:await trade.getDeliveryEvents(req.user.id,order.mid_order_id),source:'trade_core'}); }
+  catch (error) { res.status(error.status || 502).json({error:'Delivery progress unavailable'}); }
+});
 module.exports = router;

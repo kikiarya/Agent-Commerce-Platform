@@ -49,6 +49,14 @@ public class OrderService {
      */
     public OrderView placeFromCheckout(Long userId, Long productId, int qty, BigDecimal totalAmount,
                                        String key, String mock, Long checkoutId) {
+        OrderView pending = reserveFromCheckout(userId, productId, qty, totalAmount, key, mock, checkoutId);
+        settlePayment(pending.getOrderId());
+        return get(pending.getOrderId());
+    }
+
+    /** Local transaction only: callers must commit before settling a remote payment. */
+    public OrderView reserveFromCheckout(Long userId, Long productId, int qty, BigDecimal totalAmount,
+                                       String key, String mock, Long checkoutId) {
         requireUser(userId);
         if (key == null || key.isBlank() || key.length() > 48 || qty <= 0)
             throw new IllegalArgumentException("A nonblank idempotency key (max 48 chars) and positive quantity are required");
@@ -59,8 +67,10 @@ public class OrderService {
                 Order order = previous.get();
                 var lines = items.findByOrderId(order.getId());
                 if (!order.getUserId().equals(userId) || lines.stream().anyMatch(i -> !i.getProduct().getId().equals(productId))
-                        || lines.stream().mapToInt(OrderItem::getQty).sum() != qty)
-                    throw new IllegalArgumentException("Idempotency key was used for a different request");
+                        || lines.stream().mapToInt(OrderItem::getQty).sum() != qty
+                        || !Objects.equals(order.getCheckoutId(), checkoutId)
+                        || (totalAmount != null && totalAmount.compareTo(order.getTotalAmount()) != 0))
+                    throw new com.comp5348.store.exception.CheckoutConflictException("Idempotency key was used for a different request");
                 return order.getId();
             }
             Product product = products.findById(productId).orElseThrow(() -> new IllegalArgumentException("Product not found"));
@@ -87,8 +97,51 @@ public class OrderService {
             attempts.save(attempt);
             return order.getId();
         });
-        settlePayment(id);
         return get(id);
+    }
+
+    /** One confirmed cart, one order and one payment intent, all in the caller's transaction. */
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public OrderView reserveConfirmedCheckout(CheckoutSession checkout, List<CheckoutLine> cart, String key, String mock) {
+        requireUser(checkout.getUserId());
+        if (key == null || key.isBlank() || key.length() > 48 || cart.isEmpty())
+            throw new IllegalArgumentException("Valid checkout items and idempotency key are required");
+        var previous = orders.findByIdempotencyKey(key);
+        if (previous.isPresent()) {
+            Order existing = previous.get();
+            if (!Objects.equals(existing.getCheckoutId(), checkout.getId())
+                    || !existing.getUserId().equals(checkout.getUserId())
+                    || !Objects.equals(existing.getQuoteVersion(), checkout.getQuoteVersion()))
+                throw new com.comp5348.store.exception.CheckoutConflictException("Idempotency key belongs to another checkout");
+            return view(existing);
+        }
+        Order order = new Order();
+        order.setUserId(checkout.getUserId());
+        order.setStatus("PAYMENT_PENDING");
+        order.setTotalAmount(checkout.getTotalAmount());
+        order.setShippingFee(checkout.getShippingFee());
+        order.setShippingAddress(checkout.getShippingAddress());
+        order.setCurrency(checkout.getCurrency());
+        order.setQuoteVersion(checkout.getQuoteVersion());
+        order.setCheckoutId(checkout.getId());
+        order.setIdempotencyKey(key);
+        order.setPaymentAttemptId(key);
+        order.setPaymentMock(mock);
+        orders.save(order);
+        // Stable SKU ordering reduces lock inversions for overlapping carts.
+        for (CheckoutLine line : cart.stream().sorted(Comparator.comparing(CheckoutLine::getProductId)).toList()) {
+            Product product = products.findById(line.getProductId()).orElseThrow();
+            for (var allocation : inventory.reserveStock(line.getProductId(), line.getQuantity())) {
+                OrderItem item = new OrderItem();
+                item.setOrder(order); item.setProduct(product); item.setQty(allocation.quantity());
+                item.setPriceAtOrder(line.getUnitPrice()); item.setWarehouseStockId(allocation.warehouseStockId());
+                items.save(item);
+            }
+        }
+        PaymentAttempt attempt = new PaymentAttempt();
+        attempt.setPaymentAttemptId(key); attempt.setOrderId(order.getId()); attempt.setStatus("UNKNOWN");
+        attempts.save(attempt);
+        return view(order);
     }
 
     public void settlePayment(Long id) {
@@ -151,7 +204,7 @@ public class OrderService {
         Order existing = orders.findById(id).orElse(null);
         if (existing == null) return null;
         if (!existing.getUserId().equals(userId)) {
-            throw new IllegalStateException("Order does not belong to user");
+            throw new org.springframework.security.access.AccessDeniedException("Order does not belong to user");
         }
         if ("CANCELLED".equals(existing.getStatus())) {
             return view(existing);
@@ -201,7 +254,7 @@ public class OrderService {
             Order order = orders.findLockedById(id).orElse(null);
             if (order == null) return null;
             if (!order.getUserId().equals(userId)) {
-                throw new IllegalStateException("Order does not belong to user");
+                throw new org.springframework.security.access.AccessDeniedException("Order does not belong to user");
             }
             if ("CANCELLED".equals(order.getStatus())) return view(order);
             if (!"PAID".equals(order.getStatus())) {
@@ -234,7 +287,7 @@ public class OrderService {
         Order order = orders.findById(id).orElse(null);
         if (order == null) return null;
         if (!order.getUserId().equals(userId)) {
-            throw new IllegalStateException("Order does not belong to user");
+            throw new org.springframework.security.access.AccessDeniedException("Order does not belong to user");
         }
         return view(order);
     }
@@ -249,6 +302,12 @@ public class OrderService {
         v.setRefundStatus(order.getRefundStatus());
         v.setPaymentAttemptId(order.getPaymentAttemptId());
         v.setCheckoutId(order.getCheckoutId());
+        v.setShippingAddress(order.getShippingAddress());
+        v.setShippingFee(order.getShippingFee());
+        v.setCurrency(order.getCurrency());
+        v.setQuoteVersion(order.getQuoteVersion());
+        v.setItems(items.findByOrderId(order.getId()).stream().map(item -> new OrderView.Line(
+                item.getProduct().getId(), item.getQty(), item.getPriceAtOrder(), item.getWarehouseStockId())).toList());
         return v;
     }
 

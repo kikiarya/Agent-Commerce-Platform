@@ -80,6 +80,8 @@ class OrderServiceTest {
 
     @Test void repeatedCancellationDoesNotRestockOrRefundTwice() {
         order.setStatus("PAID");OrderItem item=new OrderItem();item.setWarehouseStockId(7L);item.setQty(3);
+        Product product = new Product("test", "Test", new BigDecimal("10")); product.setId(9L);
+        item.setProduct(product); item.setPriceAtOrder(product.getPrice());
         when(items.findByOrderId(1L)).thenReturn(List.of(item));
         service.cancelOrder(1L);service.cancelOrder(1L);
         verify(inventory,times(1)).restock(7L,3);verify(publisher,times(1)).publishRefundRequest(argThat(r->r.idempotencyKey().equals("refund-1")));
@@ -99,7 +101,7 @@ class OrderServiceTest {
 
     @Test void reusedKeyWithDifferentRequestIsRejected() {
         when(orders.findByIdempotencyKey("same-key")).thenReturn(Optional.of(order));
-        assertThrows(IllegalArgumentException.class,()->service.placeSingleItem(99L,9L,2,"same-key",null));
+        assertThrows(com.comp5348.store.exception.CheckoutConflictException.class,()->service.placeSingleItem(99L,9L,2,"same-key",null));
         verifyNoInteractions(bank,inventory,publisher);
     }
 
