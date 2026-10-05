@@ -4,6 +4,7 @@ const { randomUUID } = require('crypto');
 const { getDb } = require('../db');
 const { getRedis, isRedisReady } = require('../redis');
 const { resolveLlmConfig } = require('./llmConfig');
+const shoppingAdvisor = require('./shoppingAdvisor');
 const trade = require('./tradeCoreClient');
 
 const FAQ = JSON.parse(
@@ -29,7 +30,7 @@ function ensureSession(sessionId, userId) {
 }
 
 function saveMessage(sessionId, role, content, meta = null) {
-  getDb()
+  const saved = getDb()
     .prepare(
       `INSERT INTO chat_messages (session_id, role, content, meta_json)
        VALUES (?, ?, ?, ?)`
@@ -38,6 +39,7 @@ function saveMessage(sessionId, role, content, meta = null) {
   getDb()
     .prepare(`UPDATE chat_sessions SET updated_at = datetime('now') WHERE id = ?`)
     .run(sessionId);
+  return saved.lastInsertRowid;
 }
 
 async function pushMemory(sessionId, role, content) {
@@ -145,7 +147,7 @@ function detectIntent(text) {
   const t = text.toLowerCase();
   if (/(order|订单|查单)/.test(t) && /(OPS|#|\d{2,})/.test(t)) return 'order_lookup';
   if (/(flash|seckill|秒杀|限时)/.test(t)) return 'flash';
-  if (/(search|find|有没有|推荐|iphone|galaxy|pixel|xiaomi)/.test(t)) return 'search';
+  if (/(search|find|compare|有没有|推荐|预算|比较|对比|想买|iphone|galaxy|pixel|xiaomi)/.test(t)) return 'search';
   if (/(warranty|shipping|return|退|保修|物流|成色|payment|支付)/.test(t)) return 'faq';
   return 'general';
 }
@@ -217,19 +219,19 @@ function buildLocalReply(userText, toolsUsed) {
 
 async function chat({ sessionId, userId, message }) {
   const sid = ensureSession(sessionId, userId);
-  saveMessage(sid, 'user', message);
+  const turnId = saveMessage(sid, 'user', message);
   await pushMemory(sid, 'user', message);
 
-  const intent = detectIntent(message);
+  const intent = shoppingAdvisor.isFollowUp(message) ? 'search' : detectIntent(message);
   const toolsUsed = {};
 
   // Always try FAQ retrieval when keywords match (multi-intent utterances)
   const faqHits = retrieveFaq(message);
   if (faqHits.length) toolsUsed.faq = faqHits;
 
-  if (intent === 'search' || /phone|手机|机/.test(message.toLowerCase())) {
-    const q = message.replace(/推荐|找|搜索|search|find/gi, '').trim() || message;
-    toolsUsed.phones = toolSearchPhones(q.slice(0, 40));
+  if (intent === 'search') {
+    toolsUsed.shopping = await shoppingAdvisor.recommend(message, {previous:shoppingAdvisor.loadPreferences(sid)});
+    if (!toolsUsed.shopping.constraints.clarify) shoppingAdvisor.savePreferences(sid,turnId,toolsUsed.shopping.constraints);
   }
   if (intent === 'flash' || /flash|seckill|秒杀|限时/.test(message.toLowerCase())) {
     toolsUsed.flash = toolListFlashDeals();
@@ -240,8 +242,8 @@ async function chat({ sessionId, userId, message }) {
   }
 
   const memory = await getMemory(sid);
-  let reply = null;
-  let mode = 'local-faq';
+  let reply = toolsUsed.shopping?.reply || null;
+  let mode = toolsUsed.shopping ? 'catalog-guidance' : 'local-faq';
   const llmCfg = resolveLlmConfig();
 
   try {
@@ -249,12 +251,12 @@ async function chat({ sessionId, userId, message }) {
 Answer concisely in the user's language (Chinese or English).
 Use the tool results and FAQ below; do not invent order IDs or stock.
 Tool JSON: ${JSON.stringify(toolsUsed)}`;
-    reply = await callLlm([
+    if (!toolsUsed.shopping) reply = await callLlm([
       { role: 'system', content: system },
       ...memory.slice(-8).map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
       { role: 'user', content: message }
     ]);
-    if (reply) mode = `llm:${llmCfg.provider}`;
+    if (reply && !toolsUsed.shopping) mode = `llm:${llmCfg.provider}`;
   } catch (err) {
     console.warn('[chat] LLM fallback:', err.message);
   }
@@ -264,7 +266,7 @@ Tool JSON: ${JSON.stringify(toolsUsed)}`;
   saveMessage(sid, 'assistant', reply, {
     intent,
     mode,
-    provider: llmCfg.enabled ? llmCfg.provider : null,
+    provider: !toolsUsed.shopping && llmCfg.enabled ? llmCfg.provider : null,
     tools: Object.keys(toolsUsed)
   });
   await pushMemory(sid, 'assistant', reply);
@@ -274,9 +276,10 @@ Tool JSON: ${JSON.stringify(toolsUsed)}`;
     reply,
     intent,
     mode,
-    llm: llmCfg.enabled
+    llm: !toolsUsed.shopping && llmCfg.enabled
       ? { provider: llmCfg.provider, label: llmCfg.label, model: llmCfg.model }
       : null,
+    shopping: toolsUsed.shopping || null,
     tools_used: Object.keys(toolsUsed),
     citations: (toolsUsed.faq || []).map((f) => f.id)
   };

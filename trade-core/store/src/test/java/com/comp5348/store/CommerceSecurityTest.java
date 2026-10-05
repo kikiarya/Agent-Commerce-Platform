@@ -27,6 +27,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class CommerceSecurityTest {
     @Autowired MockMvc mvc;
     @MockitoBean OrderService orders;
+    @MockitoBean com.comp5348.store.repository.DeliveryEventRepository deliveryEvents;
     @MockitoBean UserRepository users;
 
     String token(long expiresIn, String issuer) {
@@ -78,5 +79,27 @@ class CommerceSecurityTest {
         when(orders.getForUser(9L, 2L)).thenThrow(new org.springframework.security.access.AccessDeniedException("owner"));
         mvc.perform(get("/api/orders/9").header("Authorization", "Bearer " + token(60000, "comp5348")))
                 .andExpect(status().isForbidden());
+    }
+    @Test void deliveryHistoryRequiresAuthentication() throws Exception {
+        mvc.perform(get("/api/orders/9/delivery-events")).andExpect(status().isUnauthorized());
+        verifyNoInteractions(deliveryEvents);
+    }
+    @Test void deliveryHistoryRejectsOtherOwnerBeforeReadingEvents() throws Exception {
+        User user = new User(); user.setId(2L); user.setRole("CUSTOMER");
+        when(users.findById(2L)).thenReturn(Optional.of(user));
+        when(orders.getForUser(9L,2L)).thenThrow(new org.springframework.security.access.AccessDeniedException("Not owner"));
+        mvc.perform(get("/api/orders/9/delivery-events").header("Authorization","Bearer "+token(60000,"comp5348")))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(deliveryEvents);
+    }
+    @Test void deliveryHistoryReturnsStoredEventsForOwner() throws Exception {
+        User user = new User(); user.setId(2L); user.setRole("CUSTOMER");
+        when(users.findById(2L)).thenReturn(Optional.of(user));
+        when(orders.getForUser(9L,2L)).thenReturn(new com.comp5348.store.dto.OrderView(9L,"DELIVERING",java.math.BigDecimal.TEN));
+        when(deliveryEvents.findByOrderIdOrderByEventTimeAscIdAsc(9L)).thenReturn(List.of(
+                new com.comp5348.store.model.DeliveryEvent(7L,9L,"PICKUP",java.time.Instant.parse("2026-10-04T00:00:00Z"))));
+        mvc.perform(get("/api/orders/9/delivery-events").header("Authorization","Bearer "+token(60000,"comp5348")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].status").value("PICKUP"))
+                .andExpect(jsonPath("$[0].shipmentId").value(7));
     }
 }

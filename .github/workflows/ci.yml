@@ -31,6 +31,18 @@ jobs:
       - name: Unit tests and package jars
         run: ./gradlew test bootJar --no-daemon --stacktrace
 
+
+      - name: Upload Java test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trade-core-test-reports
+          path: |
+            trade-core/**/build/reports/tests/test/**
+            trade-core/**/build/test-results/test/*.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
   trade-core-ui:
     name: trade-core React UI build
     runs-on: ubuntu-latest

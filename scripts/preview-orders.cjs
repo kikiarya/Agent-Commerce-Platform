@@ -1,0 +1,32 @@
+// Isolated UI fixture: real BFF, in-memory SQLite and simulated Core. Never business data.
+const {createRequire}=require('node:module');
+const path=require('node:path');
+const req=createRequire(path.join(__dirname,'../storefront/package.json'));
+const express=req('express'),jwt=req('jsonwebtoken'),bcrypt=req('bcryptjs');
+process.env.DATABASE_PATH=':memory:';
+process.env.JWT_SECRET='preview-only-secret-at-least-32-bytes';
+process.env.USE_TRADE_CORE='true';
+process.env.NODE_ENV='test';
+const listen=app=>new Promise(resolve=>{const server=app.listen(0,'127.0.0.1',()=>resolve(server));});
+(async()=>{
+ const core=express();core.use(express.json());
+ const checkout={checkoutId:1,userId:1,status:'QUOTED',quoteVersion:1,items:[{skuId:11,quantity:1,unitPrice:40},{skuId:22,quantity:1,unitPrice:80}],subtotal:120,shippingFee:0,totalAmount:120,currency:'CNY',shippingAddress:'测试地址 1 号'};
+ let completed=false;
+ const order=()=>({orderId:10,status:'DELIVERING',totalAmount:120,shippingFee:0,currency:'CNY',items:checkout.items,shippingAddress:checkout.shippingAddress,quoteVersion:1});
+ core.post('/api/auth/login',(_q,res)=>res.json({userId:1,token:jwt.sign({sub:'1'},'preview-core',{expiresIn:'1h'})}));
+ core.get('/api/checkouts/1',(_q,res)=>res.json({...checkout,status:completed?'COMPLETED':checkout.status,orderId:completed?10:null}));
+ core.post('/api/checkouts/1/confirm',(q,res)=>{if(q.body.quoteVersion!==1)return res.status(409).json({message:'Stale'});checkout.status='CONFIRMED';res.json(checkout);});
+ core.post('/api/checkouts/1/complete',(q,res)=>{if(!completed && checkout.status!=='CONFIRMED')return res.status(409).json({message:'Confirm required'});completed=true;res.json(order());});
+ core.get('/api/orders/10',(_q,res)=>res.json(order()));
+ core.get('/api/orders/10/delivery-events',(_q,res)=>res.json([{shipmentId:5,status:'PICKUP',occurredAt:'2026-10-04T00:00:00Z'},{shipmentId:5,status:'IN_TRANSIT',occurredAt:'2026-10-04T00:01:00Z'}]));
+ const coreServer=await listen(core);process.env.TRADE_CORE_BASE_URL=`http://127.0.0.1:${coreServer.address().port}`;
+ const {getDb}=req('./server/db');const db=getDb();
+ db.prepare('INSERT INTO users(id,email,password_hash,name) VALUES (1,?,?,?)').run('preview@example.test',bcrypt.hashSync('preview-only',4),'测试买家');
+ req('./server/services/coreIdentity').rememberCheckout(1,1);
+ const app=express();app.use(express.json());
+ app.use('/api/auth',req('./server/routes/auth'));app.use('/api/orders',req('./server/routes/orders'));app.use('/api/checkout',req('./server/routes/checkout'));
+ app.get('/preview',(_q,res)=>res.type('html').send('<h1>临时订单验收</h1><p>仅模拟数据</p><form><input id="email" aria-label="邮箱" value="preview@example.test"><input id="password" aria-label="密码" type="password" value="preview-only"><button>登录测试账号</button></form><script>document.querySelector("form").onsubmit=async e=>{e.preventDefault();const r=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:document.querySelector("#email").value,password:document.querySelector("#password").value})});const d=await r.json();localStorage.setItem("oldphonestore_token",d.token);location.href="/orders.html"}</script>'));
+ app.use(express.static(path.join(__dirname,'../storefront/public')));
+ const server=await listen(app);console.log(`ISOLATED PREVIEW http://127.0.0.1:${server.address().port}/preview`);
+ process.on('SIGINT',()=>{server.close();coreServer.close();process.exit(0);});
+})();

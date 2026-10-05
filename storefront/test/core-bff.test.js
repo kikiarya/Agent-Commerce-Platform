@@ -34,6 +34,10 @@ async function ready() {
 }
 before(async()=>{
  const core = express(); core.use(express.json());
+ core.get('/api/products/search',(req,res)=>{
+   assert.equal(req.query.inStock,'true');
+   res.json([{id:11,name:'Beginner skateboard',price:79.99},{id:22,name:'Premium skateboard',price:199.99}]);
+ });
  core.post('/api/auth/login',(req,res)=>{
    if(req.body.password!=='secret') return res.status(401).json({message:'Invalid credentials'});
    const userId=Number(req.body.username.replace('user',''));
@@ -68,6 +72,10 @@ before(async()=>{
    if(c.key && c.key!==req.body.idempotencyKey) return res.status(409).json({message:'Wrong key'});
    c.key=req.body.idempotencyKey;c.status='COMPLETED';c.orderId=100+c.checkoutId;
    res.json({orderId:c.orderId,totalAmount:120,status:'PAYMENT_PENDING',items:c.items});
+ });
+ core.get('/api/orders/:id/delivery-events',(req,res)=>{
+   if(failOrders) return res.status(503).json({message:'Unavailable'});
+   res.json([{shipmentId:7,status:'PICKUP',occurredAt:'2026-10-04T00:00:00Z'}]);
  });
  core.get('/api/orders/:id',(req,res)=>{
    if(failOrders) return res.status(503).json({message:'Core offline'});
@@ -213,4 +221,44 @@ test('recovery list marks unavailable core records instead of fabricating status
  const c=(await create()).body;sessions.delete(c.checkoutId);
  const row=(await request('/api/checkout')).body.checkouts.find(x=>x.checkoutId===c.checkoutId);
  assert.equal(row.unavailable,true);assert.equal(row.status,undefined);assert.equal(row.idempotencyKey,undefined);
+});
+test('delivery history is owned, live and remains on core when new checkouts disabled',async()=>{
+ const order=dbModule.getDb().prepare('SELECT * FROM orders LIMIT 1').get();
+ const url=`/api/orders/${order.id}/delivery-events`;
+ assert.equal((await request(url,null)).status,401);
+ assert.equal((await request(url,2)).status,404);
+ process.env.USE_TRADE_CORE='false';
+ try {
+   const result=await request(url);assert.equal(result.status,200);assert.equal(result.body.events[0].status,'PICKUP');
+   failOrders=true;assert.equal((await request(url)).status,503);
+ } finally {failOrders=false;process.env.USE_TRADE_CORE='true';}
+});
+test('chat shopping route uses live core candidates without transaction writes',async()=>{
+ const before=calls.filter(c=>c.method==='POST').length;
+ const result=await request('/api/chat',1,'POST',{message:'推荐滑板，预算100元'});
+ assert.equal(result.status,200);assert.equal(result.body.mode,'catalog-guidance');
+ assert.deepEqual(result.body.shopping.products.map(p=>p.id),[11]);
+ assert.equal(result.body.shopping.products[0].source,'trade_core');
+ assert.equal(calls.filter(c=>c.method==='POST').length,before);
+});
+test('shopping preferences survive DB reconnect and remain scoped to verified session owner',async()=>{
+ const first=(await request('/api/chat',1,'POST',{message:'推荐滑板，预算200元'})).body;
+ dbModule.closeDb();
+ const next=(await request('/api/chat',1,'POST',{session_id:first.session_id,message:'预算降到100元'})).body;
+ assert.equal(next.shopping.constraints.query,'skateboard');assert.equal(next.shopping.constraints.priceMax,100);
+ const stranger=(await request('/api/chat',2,'POST',{session_id:first.session_id,message:'预算50元'})).body;
+ assert.notEqual(stranger.session_id,first.session_id);assert.equal(stranger.shopping.constraints.query,'');
+ const reset=(await request('/api/chat',1,'POST',{session_id:first.session_id,message:'重新选'})).body;
+ assert.equal(reset.shopping.status,'reset');
+ const fresh=(await request('/api/chat',1,'POST',{session_id:first.session_id,message:'预算80元'})).body;
+ assert.equal(fresh.shopping.constraints.query,'');
+});
+test('older shopping replies cannot overwrite newer preference turns and expired filters are forgotten',()=>{
+ const advisor=require('../server/services/shoppingAdvisor');
+ const sid=dbModule.getDb().prepare('SELECT id FROM chat_sessions LIMIT 1').get().id;
+ advisor.savePreferences(sid,10000,{query:'wheels',priceMax:80});
+ advisor.savePreferences(sid,9999,{query:'skateboard',priceMax:200});
+ assert.equal(advisor.loadPreferences(sid).query,'wheels');
+ dbModule.getDb().prepare('UPDATE shopping_preferences SET updated_at=0 WHERE session_id=?').run(sid);
+ assert.deepEqual(advisor.loadPreferences(sid),{});
 });
