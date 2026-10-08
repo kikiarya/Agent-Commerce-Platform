@@ -1,44 +1,6 @@
 [
-  {
-    "id": "warranty",
-    "tags": ["warranty", "guarantee", "保修", "质保"],
-    "question": "What warranty do you offer?",
-    "answer": "Every certified phone includes a 90-day store warranty covering hardware defects. Battery health below advertised grade within 14 days qualifies for a free swap."
-  },
-  {
-    "id": "shipping",
-    "tags": ["shipping", "delivery", "物流", "发货"],
-    "question": "How fast is shipping?",
-    "answer": "In-stock devices usually ship within 1 business day via insured courier. Tracking is emailed after dispatch."
-  },
-  {
-    "id": "returns",
-    "tags": ["return", "refund", "退货", "退款"],
-    "question": "Can I return a phone?",
-    "answer": "You can request a return within 7 days if the device is unused and in original packaging. Flash-sale items follow the same window unless marked final sale."
-  },
-  {
-    "id": "condition",
-    "tags": ["condition", "grade", "成色", "验机"],
-    "question": "What do condition grades mean?",
-    "answer": "Like New: minimal to no cosmetic wear. Good: light marks, fully functional. Fair: visible wear, tested OK. All units pass IMEI blacklist and function checks."
-  },
-  {
-    "id": "payment",
-    "tags": ["payment", "pay", "支付", "付款"],
-    "question": "How do I pay?",
-    "answer": "After checkout, confirm payment on the order page to complete your purchase. We email a receipt once payment is confirmed."
-  },
-  {
-    "id": "flash",
-    "tags": ["flash", "seckill", "秒杀", "限时"],
-    "question": "How does flash sale work?",
-    "answer": "Flash deals are limited-time offers with limited stock. Each account can claim one unit per deal while supplies last."
-  },
-  {
-    "id": "imei",
-    "tags": ["imei", "blacklist", "解锁"],
-    "question": "Are phones unlocked / clean IMEI?",
-    "answer": "Listings show a masked IMEI. Devices are carrier-unlocked and blacklist-checked before they go on sale."
-  }
+ {"id":"returns","version":"2026-10-05","scope":"平台演示规则；实际商家政策需单独配置","tags":["return","refund","退货","退款","退换"],"question":"退换货与退款说明","answer":"当前平台支持取消已支付但未发货的订单并发起退款。支付结果未确定时，应先核对支付结果，不能直接认定扣款失败。已发货订单的退换货资格、期限和运费承担需由商家核实，平台暂无统一承诺。"},
+ {"id":"shipping","version":"2026-10-05","scope":"平台配送流程说明","tags":["shipping","delivery","物流","发货","配送","快递"],"question":"配送和进度查询","answer":"配送进度以订单详情中的包裹事件为准，可查看揽收、运输、派送和送达记录。没有事件表示尚无记录，不代表已经发货。运费以结算报价为准；预计送达时间需由承运方确认。"},
+ {"id":"warranty","version":"2026-10-05","scope":"平台咨询边界；不构成统一保修承诺","tags":["warranty","guarantee","保修","质保"],"question":"保修适用范围","answer":"保修期限、覆盖范围和凭证要求以具体商品及商家的书面条款为准。商品资料没有写明时，客服不能承诺统一保修期，请联系商家确认。"},
+ {"id":"payment","version":"2026-10-05","scope":"平台交易流程说明","tags":["payment","pay","支付","付款"],"question":"报价确认与支付处理中","answer":"提交前请核对商品、数量、收货地址、运费和总价。支付处理中表示结果尚未确定，请恢复同一结算或刷新订单，避免新建重复订单。"}
 ]

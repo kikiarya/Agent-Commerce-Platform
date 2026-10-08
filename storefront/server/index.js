@@ -5,7 +5,6 @@ const express = require('express');
 const cors = require('cors');
 const { getDb, DB_PATH } = require('./db');
 const { connectRedis, isRedisReady, closeRedis } = require('./redis');
-const { seed } = require('./seed');
 const { startOrderWorker, startTimeoutScanner, stopOrderWorker } = require('./services/orderWorker');
 const { warmAllActiveDeals } = require('./services/seckillService');
 const { resolveLlmConfig, listProviders } = require('./services/llmConfig');
@@ -27,7 +26,7 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
-seed();
+getDb(); // Initialize schema only. Demo imports require the explicit seed command.
 ensureUserMapSchema(getDb());
 
 app.get('/api/health', (_req, res) => {

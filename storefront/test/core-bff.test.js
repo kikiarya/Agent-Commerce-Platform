@@ -172,9 +172,9 @@ test('chat protects order reads and does not reuse another account chat memory',
  const first=await chat({userId:1,message:`查订单 ${order.order_no}`});
  assert.ok(first.reply.includes('PAID'));
  const stranger=await chat({userId:2,sessionId:first.session_id,message:`查订单 ${order.order_no}`});
- assert.notEqual(stranger.session_id,first.session_id);assert.ok(stranger.reply.includes('not found'));
+ assert.notEqual(stranger.session_id,first.session_id);assert.ok(stranger.reply.includes('未找到属于当前账号的订单'));
  const anon=await chat({sessionId:first.session_id,message:`查订单 ${order.order_no}`});
- assert.notEqual(anon.session_id,first.session_id);assert.ok(anon.reply.includes('Login required'));
+ assert.notEqual(anon.session_id,first.session_id);assert.ok(anon.reply.includes('请先登录'));
  failOrders=true;const unavailable=await chat({userId:1,message:`查订单 ${order.order_no}`});failOrders=false;
  assert.ok(unavailable.reply.includes('unavailable'));assert.ok(!unavailable.reply.includes('PAYMENT_PENDING'));
 });

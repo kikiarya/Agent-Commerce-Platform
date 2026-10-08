@@ -1,8 +1,11 @@
 // Read-only shopping tool. Prices and candidates always come from the catalog.
 const trade = require('./tradeCoreClient');
+const {parsePreferences,matchProduct,compareProducts}=require('./productMatch');
 const {getDb} = require('../db');
+const {planShopping}=require('./shoppingPlanner');
 function parseRequest(message, previous = {}) {
-  const raw=String(message).normalize('NFKC');
+  const parsedPreferences=parsePreferences(message,previous);
+  const raw=parsedPreferences.clean;
   if (/^(重新选|重新开始|清空偏好)[。！!\s]*$/.test(raw)) return {query:'',priceMax:null,purpose:null,reset:true};
   const clearBudget=/预算不限|不限预算/.test(raw);
   const numbers=[...raw.matchAll(/(?:预算|不超过|最多|以内|budget\s*|under\s*)(?:降到|提高到|改成|改为|调整到|为|是|[:：])?\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(千|万|k)?\s*(?:元)?|(\d+(?:\.\d{1,2})?)\s*(千|万|k)?\s*(?:元)?(?:以内|以下)/gi)];
@@ -18,31 +21,36 @@ function parseRequest(message, previous = {}) {
   query=aliases[query]||query||previous.query||'';
   if(query.length>80)return {clarify:'请缩短为商品名称或品牌，并给出预算上限。'};
   const purpose=raw.match(/(?:用来|用于|用途|主要用来)\s*[:：]?\s*(.+)/)?.[1] || previous.purpose || null;
-  return {query,priceMax,purpose};
+  return {query,priceMax,purpose,...(Object.keys(parsedPreferences.preferences).length?{preferences:parsedPreferences.preferences}:{})};
 }
-async function recommend(message, {search, previous, useCore=trade.useTradeCore()}={}) {
+async function recommend(message, {search, previous, planner=planShopping, useCore=trade.useTradeCore()}={}) {
   const constraints=parseRequest(message,previous);
   if(constraints.reset)return {status:'reset',reply:'已清空选购条件。你想买什么商品？',products:[],constraints:{query:'',priceMax:null,purpose:null}};
   if(constraints.clarify)return {status:'clarification',reply:constraints.clarify,products:[],constraints};
+  const planning=await planner(message,previous);
+  if(planning.plan?.tool==='ask_clarification')return {status:'clarification',reply:planning.plan.question,products:[],constraints:{clarify:planning.plan.question},plannerMode:planning.mode};
+  if(planning.plan?.tool==='search_catalog')constraints.query=planning.plan.query;
   if(!constraints.query && constraints.priceMax===null)return {status:'clarification',reply:'你想买什么商品？预算上限是多少元？',products:[],constraints};
   try {
     let rows;
     if(search)rows=await search(constraints);
     else if(useCore)rows=await trade.searchProducts(constraints.query,constraints.priceMax,true);
     else {
-      rows=getDb().prepare('SELECT id, brand || \' \' || model AS name, price FROM phones WHERE available=1 AND (brand LIKE ? OR model LIKE ? OR category LIKE ?) AND (? IS NULL OR price<=?)')
+      rows=getDb().prepare('SELECT id, brand || \' \' || model AS name, price, storage, color, condition FROM phones WHERE available=1 AND (brand LIKE ? OR model LIKE ? OR category LIKE ?) AND (? IS NULL OR price<=?)')
         .all(`%${constraints.query}%`,`%${constraints.query}%`,`%${constraints.query}%`,constraints.priceMax,constraints.priceMax);
     }
+    if(!useCore && Array.isArray(rows)) rows=rows.map(p=>({...p,attributes:p.attributes || {容量:p.storage,颜色:p.color,成色:p.condition}}));
     if(!Array.isArray(rows))throw new Error('Invalid catalog response');
     const products=rows.filter(p=>Number.isSafeInteger(p.id) && p.id>0 && typeof p.name==='string' && Number.isFinite(Number(p.price)) && Number(p.price)>0 && (constraints.priceMax===null || Number(p.price)<=constraints.priceMax))
-      .sort((a,b)=>Number(a.price)-Number(b.price)||a.id-b.id).slice(0,5)
-      .map(p=>({id:p.id,name:p.name,price:Number(p.price),currency:'CNY',source:useCore?'trade_core':'local',reason:constraints.priceMax===null?'符合本次商品搜索条件':`单价不超过预算 ${constraints.priceMax} 元`}));
+      .map(p=>({...p,...matchProduct(p,constraints)}))
+      .sort((a,b)=>a.conflicts.length-b.conflicts.length || b.matchScore-a.matchScore || Number(a.price)-Number(b.price)||a.id-b.id).slice(0,5)
+      .map(p=>({attributes:p.attributes,purposes:p.purposes,evidence:p.evidence,gaps:p.gaps,conflicts:p.conflicts,id:p.id,name:p.name,price:Number(p.price),currency:'CNY',source:useCore?'trade_core':'local',reason:constraints.priceMax===null?'符合本次商品搜索条件':`单价不超过预算 ${constraints.priceMax} 元`}));
     const note='价格和可售状态以本次查询为准，下单时重新报价；预算筛选不包含运费。';
-    let reply=products.length?`按价格从低到高找到这些候选：\n${products.map(p=>`• ${p.name} — ¥${p.price.toFixed(2)}；${p.reason}`).join('\n')}\n${note}`:'没有找到符合条件的在售商品。可以换一个商品名称或调整预算。';
+    let reply=products.length?`根据已提供的属性和价格找到这些候选：\n${products.map(p=>`• ${p.name} — ¥${p.price.toFixed(2)}；${p.reason}${p.evidence.length?`；匹配依据：${p.evidence.join("、")}`:""}${p.conflicts.length?`；偏好差异：${p.conflicts.join("、")}`:""}${p.gaps.length?`；资料缺口：${p.gaps.join("、")}`:""}`).join('\n')}\n${note}`:'没有找到符合条件的在售商品。可以换一个商品名称或调整预算。';
     reply=`当前条件：${constraints.query || '所有商品'}；${constraints.priceMax===null?'未设预算上限':`单价不超过 ${constraints.priceMax} 元`}。\n`+reply;
-    if(constraints.purpose)reply+='\n当前商品资料不足以验证是否适合该用途，不能据此保证性能或兼容性。';
-    return {status:products.length?'ok':'empty',constraints,products,reply,checkedAt:new Date().toISOString()};
-  } catch {return {status:'unavailable',constraints,products:[],reply:'商品查询暂时不可用，请稍后再试。当前无法确认价格和可售状态。'};}
+    if(constraints.purpose && products.some(p=>p.gaps.length))reply+='\n当前商品资料不足以验证是否适合该用途，不能据此保证性能或兼容性。';
+    return {plannerMode:planning.mode,status:products.length?'ok':'empty',constraints,products,comparison:compareProducts(products),reply,checkedAt:new Date().toISOString()};
+  } catch {return {plannerMode:planning.mode,status:'unavailable',constraints,products:[],reply:'商品查询暂时不可用，请稍后再试。当前无法确认价格和可售状态。'};}
 }
 function preferencesDb() {
   const db=getDb();
@@ -58,11 +66,11 @@ function loadPreferences(sessionId) {
 }
 function savePreferences(sessionId,turnId,constraints) {
   // Persist filters only. Older concurrent replies cannot overwrite newer turns.
-  const safe={query:constraints.query || '',priceMax:constraints.priceMax ?? null,purpose:constraints.purpose || null};
+  const safe={query:constraints.query || '',priceMax:constraints.priceMax ?? null,purpose:constraints.purpose || null,preferences:constraints.preferences || {}};
   preferencesDb().prepare(`INSERT INTO shopping_preferences VALUES(?,?,?,?)
     ON CONFLICT(session_id) DO UPDATE SET turn_id=excluded.turn_id,
       constraints_json=excluded.constraints_json,updated_at=excluded.updated_at
     WHERE excluded.turn_id>shopping_preferences.turn_id`).run(sessionId,turnId,JSON.stringify(safe),Date.now());
 }
-function isFollowUp(message) {return /^(预算|不限预算|换成|换个|改看|用于|用来|用途|主要用来|重新选|重新开始|清空偏好)/.test(String(message).trim());}
+function isFollowUp(message) {return /^(偏好|预算|不限预算|换成|换个|改看|用于|用来|用途|主要用来|重新选|重新开始|清空偏好)/.test(String(message).trim());}
 module.exports={parseRequest,recommend,loadPreferences,savePreferences,isFollowUp};

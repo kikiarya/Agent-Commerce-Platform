@@ -20,6 +20,22 @@ public class Product {
     @Column(nullable = false, precision = 18, scale = 2)
     private BigDecimal price;
 
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "product_attribute", joinColumns = @JoinColumn(name = "product_id"))
+    @MapKeyColumn(name = "attribute_name", length = 80)
+    @Column(name = "attribute_value", length = 200)
+    private java.util.Map<String, String> attributes = new java.util.LinkedHashMap<>();
+
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "product_purpose", joinColumns = @JoinColumn(name = "product_id"))
+    @Column(name = "purpose", length = 80)
+    private java.util.Set<String> purposes = new java.util.LinkedHashSet<>();
+
+    public java.util.Map<String,String> getAttributes() { return attributes; }
+    public void setAttributes(java.util.Map<String,String> value) { attributes = value == null ? new java.util.LinkedHashMap<>() : value; }
+    public java.util.Set<String> getPurposes() { return purposes; }
+    public void setPurposes(java.util.Set<String> value) { purposes = value == null ? new java.util.LinkedHashSet<>() : value; }
+
     // --- JPA required no-arg constructor ---
     public Product() {}
 

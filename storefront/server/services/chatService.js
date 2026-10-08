@@ -6,6 +6,9 @@ const { getRedis, isRedisReady } = require('../redis');
 const { resolveLlmConfig } = require('./llmConfig');
 const shoppingAdvisor = require('./shoppingAdvisor');
 const trade = require('./tradeCoreClient');
+const proposals=require('./orderProposal');
+const support=require('./groundedSupport');
+const customerMemory = require('./customerMemory');
 
 const FAQ = JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', 'knowledge', 'faq.json'), 'utf8')
@@ -46,24 +49,15 @@ async function pushMemory(sessionId, role, content) {
   if (!isRedisReady()) return;
   const key = `chat:mem:${sessionId}`;
   const redis = getRedis();
-  await redis.rpush(key, JSON.stringify({ role, content, ts: Date.now() }));
-  await redis.ltrim(key, -20, -1);
-  await redis.expire(key, 60 * 60 * 24 * 7);
+  try {
+    await redis.rpush(key, JSON.stringify({ role, content, ts: Date.now() }));
+    await redis.ltrim(key, -20, -1);
+    await redis.expire(key, 60 * 60 * 24 * 7);
+  } catch { /* SQLite remains the source; cache failure must not abort a saved turn. */ }
 }
 
 async function getMemory(sessionId) {
-  if (!isRedisReady()) {
-    return getDb()
-      .prepare(
-        `SELECT role, content FROM chat_messages
-         WHERE session_id = ?
-         ORDER BY id DESC LIMIT 10`
-      )
-      .all(sessionId)
-      .reverse();
-  }
-  const raw = await getRedis().lrange(`chat:mem:${sessionId}`, 0, -1);
-  return raw.map((s) => JSON.parse(s));
+  return customerMemory.workingMessages(sessionId);
 }
 
 function retrieveFaq(query) {
@@ -98,7 +92,7 @@ function toolSearchPhones(query) {
 }
 
 async function toolGetOrder(orderNoOrId, userId) {
-  if (!userId) return { error: 'Login required' };
+  if (!userId) return { error: '请先登录，再查询自己的订单。', outcome: 'login_required' };
   const db = getDb();
   let order = null;
   if (/^\d+$/.test(String(orderNoOrId))) {
@@ -106,9 +100,9 @@ async function toolGetOrder(orderNoOrId, userId) {
   } else {
     order = db.prepare('SELECT * FROM orders WHERE order_no = ?').get(String(orderNoOrId));
   }
-  if (!order) return null;
+  if (!order) return { error: '未找到属于当前账号的订单，请核对订单号。', outcome: 'not_found' };
   if (order.user_id !== userId) {
-    return { error: 'Order not found for current account' };
+    return { error: '未找到属于当前账号的订单，请核对订单号。', outcome: 'not_found' };
   }
   if (order.mid_order_id) {
     try {
@@ -222,66 +216,65 @@ async function chat({ sessionId, userId, message }) {
   const turnId = saveMessage(sid, 'user', message);
   await pushMemory(sid, 'user', message);
 
-  const intent = shoppingAdvisor.isFollowUp(message) ? 'search' : detectIntent(message);
+  const working = await getMemory(sid);
+  const queryMessage = customerMemory.resolveOrderReference(message, working.slice(0, -1));
+  const memoryAction = customerMemory.command(message);
+  const intent = memoryAction ? (memoryAction === 'history' ? 'history' : 'memory') : /^选购\s/.test(message) ? 'proposal' : shoppingAdvisor.isFollowUp(message) ? 'search' : detectIntent(queryMessage);
+  const procedure = customerMemory.selectProcedure(intent);
   const toolsUsed = {};
+  const memoryResult = memoryAction ? customerMemory.handleCommand({ userId, sessionId: sid, turnId, message }) : null;
+  if(customerMemory.allows(procedure, 'create_proposal')){try{toolsUsed.proposal=proposals.create(userId,sid,proposals.parseSelection(message));}catch(e){toolsUsed.proposal={reply:e.message,error:true};}}
 
   // Always try FAQ retrieval when keywords match (multi-intent utterances)
-  const faqHits = retrieveFaq(message);
+  const faqHits = customerMemory.allows(procedure, 'retrieve_faq') ? support.retrieve(message) : [];
   if (faqHits.length) toolsUsed.faq = faqHits;
 
-  if (intent === 'search') {
-    toolsUsed.shopping = await shoppingAdvisor.recommend(message, {previous:shoppingAdvisor.loadPreferences(sid)});
-    if (!toolsUsed.shopping.constraints.clarify) shoppingAdvisor.savePreferences(sid,turnId,toolsUsed.shopping.constraints);
+  if (customerMemory.allows(procedure, 'search_catalog')) {
+    toolsUsed.shopping = await shoppingAdvisor.recommend(message, {previous:customerMemory.previousPreferences(userId, shoppingAdvisor.loadPreferences(sid))});
+    if (!toolsUsed.shopping.constraints.clarify && customerMemory.isActiveTurn(userId, turnId)) shoppingAdvisor.savePreferences(sid,turnId,toolsUsed.shopping.constraints);
   }
-  if (intent === 'flash' || /flash|seckill|秒杀|限时/.test(message.toLowerCase())) {
+  if (customerMemory.allows(procedure, 'list_flash_deals')) {
     toolsUsed.flash = toolListFlashDeals();
   }
-  if (intent === 'order_lookup') {
-    const m = message.match(/MID-\d+|OPS[A-Z0-9]+|\b\d{1,8}\b/i);
+  if (customerMemory.allows(procedure, 'get_order')) {
+    const m = queryMessage.match(/MID-\d+|OPS[A-Z0-9]+|\b\d{1,8}\b/i);
     if (m) toolsUsed.order = await toolGetOrder(m[0], userId);
   }
 
-  const memory = await getMemory(sid);
-  let reply = toolsUsed.shopping?.reply || null;
-  let mode = toolsUsed.shopping ? 'catalog-guidance' : 'local-faq';
+  const grounded=support.answer(message);
+  let reply = memoryResult?.reply || toolsUsed.proposal?.reply || toolsUsed.shopping?.reply || (['order_lookup','flash'].includes(intent)?buildLocalReply(message,toolsUsed):grounded.reply);
+  let mode = toolsUsed.shopping ? (toolsUsed.shopping.plannerMode === 'model-tool' ? 'model-catalog-guidance' : toolsUsed.shopping.plannerMode === 'rules-fallback' ? 'catalog-guidance-fallback' : 'catalog-guidance') : 'local-faq';
   const llmCfg = resolveLlmConfig();
 
-  try {
-    const system = `You are OldPhoneStore customer support for a certified pre-owned phone shop.
-Answer concisely in the user's language (Chinese or English).
-Use the tool results and FAQ below; do not invent order IDs or stock.
-Tool JSON: ${JSON.stringify(toolsUsed)}`;
-    if (!toolsUsed.shopping) reply = await callLlm([
-      { role: 'system', content: system },
-      ...memory.slice(-8).map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
-      { role: 'user', content: message }
-    ]);
-    if (reply && !toolsUsed.shopping) mode = `llm:${llmCfg.provider}`;
-  } catch (err) {
-    console.warn('[chat] LLM fallback:', err.message);
-  }
 
   if (!reply) reply = buildLocalReply(message, toolsUsed);
 
   saveMessage(sid, 'assistant', reply, {
     intent,
     mode,
-    provider: !toolsUsed.shopping && llmCfg.enabled ? llmCfg.provider : null,
-    tools: Object.keys(toolsUsed)
+    provider: (toolsUsed.shopping?.plannerMode === 'model-tool') && llmCfg.enabled ? llmCfg.provider : null,
+    tools: Object.keys(toolsUsed),
+    shopping: toolsUsed.shopping || null,
+    procedure: { id: procedure.id, version: procedure.version }
   });
   await pushMemory(sid, 'assistant', reply);
+  customerMemory.recordEpisode({ userId, sessionId: sid, turnId, intent, tools: toolsUsed, procedure });
 
   return {
     session_id: sid,
+    procedure: { id: procedure.id, version: procedure.version },
+    memory: memoryResult ? { action: memoryResult.action, status: memoryResult.status } : null,
     reply,
     intent,
     mode,
-    llm: !toolsUsed.shopping && llmCfg.enabled
+    llm: (toolsUsed.shopping?.plannerMode === 'model-tool') && llmCfg.enabled
       ? { provider: llmCfg.provider, label: llmCfg.label, model: llmCfg.model }
       : null,
     shopping: toolsUsed.shopping || null,
     tools_used: Object.keys(toolsUsed),
-    citations: (toolsUsed.faq || []).map((f) => f.id)
+    proposal: toolsUsed.proposal || null,
+    sources: ['search','proposal','order_lookup','flash','memory','history'].includes(intent)?[]:grounded.sources,
+    citations: ['search','proposal','order_lookup','flash','memory','history'].includes(intent)?[]:grounded.sources.map(f=>f.id)
   };
 }
 
@@ -301,10 +294,16 @@ async function streamChat(res, payload) {
     `data: ${JSON.stringify({
       type: 'done',
       session_id: result.session_id,
+      procedure: result.procedure,
+      memory: result.memory,
       intent: result.intent,
       mode: result.mode,
       tools_used: result.tools_used,
-      citations: result.citations
+      citations: result.citations,
+      shopping: result.shopping,
+      proposal: result.proposal,
+      sources: result.sources,
+      llm: result.llm
     })}\n\n`
   );
   res.end();

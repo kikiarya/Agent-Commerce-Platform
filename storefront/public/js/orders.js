@@ -108,5 +108,5 @@
   $('reload').onclick=()=>load();
   $('more').onclick=async()=>{ $('more').disabled=true;try{await loadCheckouts(true);}catch(e){$('account').textContent=e.message;}finally{$('more').disabled=false;} };
   window.addEventListener('storage',event=>{if(event.key==='oldphonestore_token'){generation++;selected=null;$('detail').close();$('orders').replaceChildren();$('checkouts').replaceChildren();$('account').textContent='登录已改变，请刷新页面';}});
-  load();
+  load().then(()=>{const m=location.hash.match(/^#checkout=(\d+)$/);if(m)detail('checkout',Number(m[1]));});
 })();

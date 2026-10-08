@@ -1,5 +1,5 @@
 const express = require('express');
-const { authOptional } = require('../middleware/auth');
+const { authOptional, authRequired } = require('../middleware/auth');
 const { chat, streamChat, FAQ } = require('../services/chatService');
 
 const router = express.Router();
@@ -7,6 +7,8 @@ const router = express.Router();
 router.get('/faq', (_req, res) => {
   res.json({ count: FAQ.length, faq: FAQ });
 });
+
+router.get('/faq/:id',(req,res)=>{const f=FAQ.find(x=>x.id===req.params.id);if(!f)return res.status(404).json({error:'Source not found'});res.json(f);});
 
 router.post('/', authOptional, async (req, res) => {
   const { message, session_id, stream } = req.body || {};
@@ -33,4 +35,11 @@ router.post('/', authOptional, async (req, res) => {
   }
 });
 
+const proposals=require('../services/orderProposal');
+router.post('/proposals',authRequired,(req,res)=>{
+ try{res.json(proposals.create(req.user.id,req.body.session_id,req.body.items));}catch(e){res.status(e.status||500).json({error:e.message});}
+});
+router.post('/proposals/:id/quote',authRequired,async(req,res)=>{
+ try{res.json(await proposals.quote(req.params.id,req.user.id,req.body.shippingAddress));}catch(e){res.status(e.status||502).json({error:e.message});}
+});
 module.exports = router;

@@ -1,0 +1,108 @@
+[
+  {
+    "id": "catalog-guidance",
+    "version": "1.0.0",
+    "intent": "search",
+    "tools": [
+      "search_catalog",
+      "retrieve_faq"
+    ],
+    "steps": [
+      "读取会话条件和明确保存的用户属性",
+      "查询当前商品目录",
+      "核实价格与属性并回复",
+      "记录实际查询结果"
+    ]
+  },
+  {
+    "id": "order-status",
+    "version": "1.0.0",
+    "intent": "order_lookup",
+    "tools": [
+      "get_order",
+      "retrieve_faq"
+    ],
+    "steps": [
+      "校验登录身份",
+      "按当前用户查询订单",
+      "查询失败如实告知",
+      "记录当时的查询结果"
+    ]
+  },
+  {
+    "id": "policy-answer",
+    "version": "1.0.0",
+    "intent": "faq",
+    "tools": [
+      "retrieve_faq"
+    ],
+    "steps": [
+      "检索有来源的政策",
+      "标注版本和范围",
+      "不执行退款或支付"
+    ]
+  },
+  {
+    "id": "flash-query",
+    "version": "1.0.0",
+    "intent": "flash",
+    "tools": [
+      "list_flash_deals",
+      "retrieve_faq"
+    ],
+    "steps": [
+      "查询当前优惠",
+      "不保证未来库存"
+    ]
+  },
+  {
+    "id": "selection-proposal",
+    "version": "1.0.0",
+    "intent": "proposal",
+    "tools": [
+      "create_proposal",
+      "retrieve_faq"
+    ],
+    "steps": [
+      "生成待确认选购草案",
+      "用户通过原有结算流程确认报价与下单"
+    ]
+  },
+  {
+    "id": "memory-control",
+    "version": "1.0.0",
+    "intent": "memory",
+    "tools": [
+      "manage_memory"
+    ],
+    "steps": [
+      "要求登录",
+      "按当前用户读取保存或清除长期记忆"
+    ]
+  },
+  {
+    "id": "support-history",
+    "version": "1.0.0",
+    "intent": "history",
+    "tools": [
+      "retrieve_episodes"
+    ],
+    "steps": [
+      "要求登录",
+      "检索当前用户的近期事件",
+      "明确历史状态不是当前业务状态"
+    ]
+  },
+  {
+    "id": "general-support",
+    "version": "1.0.0",
+    "intent": "general",
+    "tools": [
+      "retrieve_faq"
+    ],
+    "steps": [
+      "检索政策来源",
+      "资料不足时请求明确问题"
+    ]
+  }
+]

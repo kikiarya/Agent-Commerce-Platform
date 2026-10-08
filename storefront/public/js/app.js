@@ -588,6 +588,35 @@
     if (result.session_id) localStorage.setItem(CHAT_SESSION_KEY, result.session_id);
     thinking.textContent = result.reply;
     thinking.title = `mode=${result.mode} intent=${result.intent}`;
+    const line=(parent,tag,value)=>{const el=document.createElement(tag);el.textContent=value;parent.appendChild(el);return el;};
+    const showProposal=proposal=>{
+      if(proposal.error)return;
+      const card=line(thinking,'section','待确认选购清单');
+      for(const item of proposal.items)line(card,'p',`${item.name} × ${item.quantity}`);
+      const label=line(card,'label','收货地址');const address=document.createElement('input');address.maxLength=500;label.append(address);
+      const button=line(card,'button','获取最新报价');button.type='button';
+      const state=line(card,'p','获取报价不会提交订单或扣款');
+      button.onclick=async()=>{button.disabled=true;try{
+        const q=await api(`/api/chat/proposals/${proposal.id}/quote`,{method:'POST',body:JSON.stringify({shippingAddress:address.value})});
+        state.textContent=`报价 ${q.quoteVersion}：合计 ${q.totalAmount} ${q.currency}（运费 ${q.shippingFee}）；地址：${q.shippingAddress}`;
+        for(const item of q.items || [])line(card,'p',`商品 ${item.skuId} × ${item.quantity}，单价 ${item.unitPrice}`);
+        const link=line(card,'a','核对报价并继续');link.href=`/orders.html#checkout=${q.checkoutId}`;
+      }catch(e){state.textContent=e.message;button.disabled=false;}};
+    };
+    if(result.proposal)showProposal(result.proposal);
+    if(result.shopping?.products?.length){
+      const panel=line(thinking,'section','商品比较与选购');const table=line(panel,'table','');
+      const header=line(table,'tr','');line(header,'th','属性');for(const p of result.shopping.products)line(header,'th',p.name);
+      for(const row of result.shopping.comparison || []){const tr=line(table,'tr','');line(tr,'th',row.attribute);for(const v of row.values)line(tr,'td',v.value);}
+      const inputs=[];
+      for(const p of result.shopping.products.filter(p=>p.source==='trade_core')){
+        const label=line(panel,'label',`${p.name}（编号 ${p.id}）数量：`);const input=document.createElement('input');input.type='number';input.min='0';input.max='99';input.value='0';label.append(input);inputs.push({skuId:p.id,input});
+      }
+      if(inputs.length){const button=line(panel,'button','整理选购清单');button.type='button';button.onclick=async()=>{button.disabled=true;try{
+        const proposal=await api('/api/chat/proposals',{method:'POST',body:JSON.stringify({session_id:result.session_id,items:inputs.map(x=>({skuId:x.skuId,quantity:Number(x.input.value)})).filter(x=>x.quantity>0)})});showProposal(proposal);
+      }catch(e){toast(e.message);button.disabled=false;}};}
+    }
+    for(const source of result.sources || []){const a=line(thinking,'a',`依据：${source.title}（${source.version}）`);a.href=source.url;a.target='_blank';a.rel='noopener';}
     els.chatLog.scrollTop = els.chatLog.scrollHeight;
   }
 

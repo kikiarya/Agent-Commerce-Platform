@@ -50,6 +50,7 @@ public class ProductCatalogService {
 
     @Transactional
     public ProductView create(Product product) {
+        validateMetadata(product);
         Product saved = products.save(product);
         invalidation.productChanged(saved.getId());
         return toView(saved);
@@ -61,7 +62,10 @@ public class ProductCatalogService {
         if (existing == null) return null;
         existing.setSku(product.getSku());
         existing.setName(product.getName());
+        validateMetadata(product);
         existing.setPrice(product.getPrice());
+        existing.getAttributes().clear(); existing.getAttributes().putAll(product.getAttributes());
+        existing.getPurposes().clear(); existing.getPurposes().addAll(product.getPurposes());
         Product saved = products.save(existing);
         invalidation.productChanged(id);
         return toView(saved);
@@ -75,7 +79,14 @@ public class ProductCatalogService {
         return true;
     }
 
+    private void validateMetadata(Product p) {
+        if (p.getAttributes().size() > 30 || p.getPurposes().size() > 20
+            || p.getAttributes().entrySet().stream().anyMatch(e -> e.getKey() == null || e.getKey().isBlank() || e.getKey().length()>80 || e.getValue()==null || e.getValue().isBlank() || e.getValue().length()>200)
+            || p.getPurposes().stream().anyMatch(v -> v==null || v.isBlank() || v.length()>80))
+            throw new IllegalArgumentException("Invalid product attributes or purposes");
+    }
+
     private ProductView toView(Product product) {
-        return new ProductView(product.getId(), product.getSku(), product.getName(), product.getPrice());
+        return new ProductView(product.getId(), product.getSku(), product.getName(), product.getPrice(), java.util.Map.copyOf(product.getAttributes()), java.util.Set.copyOf(product.getPurposes()));
     }
 }
